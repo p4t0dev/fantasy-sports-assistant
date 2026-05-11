@@ -210,6 +210,14 @@ def analyze_draft(username, draft_id, league_id=None, position_filter=None):
             print(f"      NFL Draft: {g.get('nfl_draft_pick')}")
             print(f"      NFL.com: {g.get('nfl_com_grade')}")
             print(f"      CBS: {g.get('cbs_grade')}")
+            
+        # Add Sports Reference CFB Lookup Link for rookies
+        years = p.get("years_exp")
+        if years is None or years == 0:
+            import urllib.parse
+            query_name = urllib.parse.quote_plus(name)
+            cfb_url = f"https://www.sports-reference.com/cfb/search/search.fcgi?search={query_name}"
+            print(f"      College Stats Lookup: {cfb_url}")
 
 def analyze_waivers(username, league_id):
     user = get_user(username)
