@@ -84,6 +84,7 @@ def analyze_draft(username, draft_id, league_id=None, position_filter=None):
     is_rookie_draft = settings.get('player_type') == 1
     if is_rookie_draft:
         print("Note: This is a ROOKIE ONLY draft. Ranks will be adjusted accordingly.")
+    print("Strategy Reminder: For SF QBs, target paths behind bridge veterans. For blocked elite WRs, use the Taxi Squad.")
     
     picks = get_draft_picks(draft_id)
     picked_player_ids = set()
@@ -105,9 +106,18 @@ def analyze_draft(username, draft_id, league_id=None, position_filter=None):
         try:
             with urllib.request.urlopen(req) as response:
                 league_info = json.loads(response.read().decode())
-                print(f"Roster Positions: {league_info.get('roster_positions')}")
+                roster_positions = league_info.get('roster_positions', [])
+                req_qb = roster_positions.count('QB')
+                req_rb = roster_positions.count('RB')
+                req_wr = roster_positions.count('WR')
+                req_te = roster_positions.count('TE')
+                req_flex = roster_positions.count('FLEX')
+                req_sflex = roster_positions.count('SUPER_FLEX')
+                
+                print(f"Starter Requirements: QB={req_qb}, RB={req_rb}, WR={req_wr}, TE={req_te}, FLEX={req_flex}, SUPER_FLEX={req_sflex}")
+                
                 scoring = league_info.get("scoring_settings", {})
-                print(f"Scoring: PPR={scoring.get('rec', 0)}, TE Premium={scoring.get('bonus_rec_te', 0)}")
+                print(f"Scoring: PPR={scoring.get('rec', 0)}, TE Premium={scoring.get('bonus_rec_te', 0)}, Pass TD={scoring.get('pass_td', 0)}")
         except Exception:
             pass
 
@@ -197,7 +207,7 @@ def analyze_draft(username, draft_id, league_id=None, position_filter=None):
             continue
         filtered_available.append((display_rank, p))
         
-    for display_rank, p in filtered_available[:20]:
+    for display_rank, p in filtered_available[:30]:
         name = f"{p.get('first_name')} {p.get('last_name')}"
         pos = p.get("position")
         team = p.get("team", "FA")
@@ -218,6 +228,22 @@ def analyze_draft(username, draft_id, league_id=None, position_filter=None):
             query_name = urllib.parse.quote_plus(name)
             cfb_url = f"https://www.sports-reference.com/cfb/search/search.fcgi?search={query_name}"
             print(f"      College Stats Lookup: {cfb_url}")
+            
+        # Display Depth Chart Info if available
+        dc_pos = p.get('depth_chart_position')
+        dc_order = p.get('depth_chart_order')
+        if dc_pos or dc_order:
+            print(f"      Depth Chart: {dc_pos or 'UNK'} - String: {dc_order or 'UNK'}")
+            if team and team != "FA" and pos:
+                dc_list = []
+                for op in players.values():
+                    if op.get('team') == team and op.get('position') == pos:
+                        op_name = f"{op.get('first_name')} {op.get('last_name')}"
+                        op_order = op.get('depth_chart_order')
+                        dc_list.append((op_order if op_order is not None else 99, op_name))
+                dc_list.sort()
+                dc_str = " | ".join([f"{o if o != 99 else 'UNK'}: {n}" for o, n in dc_list])
+                print(f"      Full {team} {pos} Depth Chart: {dc_str}")
 
 def analyze_waivers(username, league_id):
     user = get_user(username)
