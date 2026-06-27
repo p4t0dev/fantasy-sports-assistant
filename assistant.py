@@ -16,7 +16,84 @@ def load_players():
             players = json.load(f)
     return players
 
-def load_multi_year_stats(years=[2023, 2024, 2025]):
+def calculate_custom_score(p_stats, pos, scoring):
+    if not scoring:
+        return max(p_stats.get("pts_ppr", 0) or 0, p_stats.get("pts_idp", 0) or 0)
+    
+    is_def = pos in ['LB', 'DB', 'DL', 'DE', 'DT', 'CB', 'S']
+    
+    if is_def:
+        tkl_solo = p_stats.get("idp_tkl_solo", 0) or 0
+        tkl_ast = p_stats.get("idp_tkl_ast", 0) or 0
+        tkl_loss = p_stats.get("idp_tkl_loss", 0) or 0
+        sack = p_stats.get("idp_sack", 0) or 0
+        qb_hit = p_stats.get("idp_qb_hit", 0) or 0
+        ff = p_stats.get("idp_ff", 0) or 0
+        fum_rec = p_stats.get("idp_fum_rec", 0) or 0
+        interception = p_stats.get("idp_int", 0) or 0
+        pass_def = p_stats.get("idp_pass_def", 0) or 0
+        safe = p_stats.get("idp_safe", 0) or 0
+        def_td = p_stats.get("idp_def_td", 0) or 0
+        blk_kick = p_stats.get("idp_blk_kick", 0) or 0
+        
+        score = (
+            tkl_solo * scoring.get("idp_tkl_solo", 2.0) +
+            tkl_ast * scoring.get("idp_tkl_ast", 1.0) +
+            tkl_loss * scoring.get("idp_tkl_loss", 2.0) +
+            sack * scoring.get("idp_sack", 6.0) +
+            qb_hit * scoring.get("idp_qb_hit", 1.0) +
+            ff * scoring.get("idp_ff", 3.0) +
+            fum_rec * scoring.get("idp_fum_rec", 3.0) +
+            interception * scoring.get("idp_int", 6.0) +
+            pass_def * scoring.get("idp_pass_def", 3.0) +
+            safe * scoring.get("idp_safe", 3.0) +
+            def_td * scoring.get("idp_def_td", 6.0) +
+            blk_kick * scoring.get("idp_blk_kick", 3.0)
+        )
+        return round(score, 2)
+    else:
+        pass_yd = p_stats.get("pass_yd", 0) or 0
+        pass_td = p_stats.get("pass_td", 0) or 0
+        pass_int = p_stats.get("pass_int", 0) or 0
+        rush_yd = p_stats.get("rush_yd", 0) or 0
+        rush_td = p_stats.get("rush_td", 0) or 0
+        rec = p_stats.get("rec", 0) or 0
+        rec_yd = p_stats.get("rec_yd", 0) or 0
+        rec_td = p_stats.get("rec_td", 0) or 0
+        fum_lost = p_stats.get("fum_lost", 0) or 0
+        pass_2pt = p_stats.get("pass_2pt", 0) or 0
+        rush_2pt = p_stats.get("rush_2pt", 0) or 0
+        rec_2pt = p_stats.get("rec_2pt", 0) or 0
+        
+        score = (
+            pass_yd * scoring.get("pass_yd", 0.04) +
+            pass_td * scoring.get("pass_td", 4.0) +
+            pass_int * scoring.get("pass_int", -2.0) +
+            rush_yd * scoring.get("rush_yd", 0.1) +
+            rush_td * scoring.get("rush_td", 6.0) +
+            rec_yd * scoring.get("rec_yd", 0.1) +
+            rec_td * scoring.get("rec_td", 6.0) +
+            fum_lost * scoring.get("fum_lost", -2.0) +
+            pass_2pt * scoring.get("pass_2pt", 2.0) +
+            rush_2pt * scoring.get("rush_2pt", 2.0) +
+            rec_2pt * scoring.get("rec_2pt", 2.0)
+        )
+        
+        rec_score = rec * scoring.get("rec", 1.0)
+        if pos == "TE":
+            rec_score += rec * scoring.get("bonus_rec_te", 0.0)
+        elif pos == "RB":
+            rec_score += rec * scoring.get("bonus_rec_rb", 0.0)
+        elif pos == "WR":
+            rec_score += rec * scoring.get("bonus_rec_wr", 0.0)
+            
+        score += rec_score
+        return round(score, 2)
+
+def load_multi_year_stats(years=[2023, 2024, 2025], scoring_settings=None, players_db=None):
+    if scoring_settings and not players_db:
+        players_db = load_players()
+        
     aggregated_stats = {}
     for year in years:
         stats_file = f"stats_{year}.json"
@@ -39,9 +116,14 @@ def load_multi_year_stats(years=[2023, 2024, 2025]):
             if pid not in aggregated_stats:
                 aggregated_stats[pid] = {"pts": 0, "gp": 0, "tkl": 0, "rec": 0, "years_played": 0}
             
-            pts = p_stats.get("pts_ppr", 0) or p_stats.get("pts_idp", 0) or 0
             gp = p_stats.get("gp", 0) or 0
             if gp > 0:
+                pos = None
+                if players_db and pid in players_db:
+                    pos = players_db[pid].get("position")
+                
+                pts = calculate_custom_score(p_stats, pos, scoring_settings)
+                
                 aggregated_stats[pid]["pts"] += pts
                 aggregated_stats[pid]["gp"] += gp
                 aggregated_stats[pid]["tkl"] += (p_stats.get("idp_tkl", 0) or 0)
@@ -103,6 +185,7 @@ def analyze_draft(username, draft_id, league_id=None, position_filter=None):
         import urllib.request
         league_url = f"https://api.sleeper.app/v1/league/{league_id}"
         req = urllib.request.Request(league_url, headers={'User-Agent': 'Mozilla'})
+        scoring = {}
         try:
             with urllib.request.urlopen(req) as response:
                 league_info = json.loads(response.read().decode())
@@ -122,7 +205,7 @@ def analyze_draft(username, draft_id, league_id=None, position_filter=None):
             pass
 
         rosters = get_rosters(league_id)
-        stats = load_multi_year_stats()
+        stats = load_multi_year_stats(scoring_settings=scoring, players_db=players)
         rostered_player_ids = set()
         if rosters:
             for r in rosters:
@@ -255,10 +338,12 @@ def analyze_waivers(username, league_id):
     import urllib.request
     league_url = f"https://api.sleeper.app/v1/league/{league_id}"
     req = urllib.request.Request(league_url, headers={'User-Agent': 'Mozilla'})
+    scoring_settings = {}
     try:
         with urllib.request.urlopen(req) as response:
             league_info = json.loads(response.read().decode())
             roster_positions = league_info.get('roster_positions', [])
+            scoring_settings = league_info.get('scoring_settings', {})
     except Exception:
         roster_positions = []
         
@@ -270,8 +355,8 @@ def analyze_waivers(username, league_id):
         print("Roster not found.")
         return
 
-    stats = load_multi_year_stats()
     players = load_players()
+    stats = load_multi_year_stats(scoring_settings=scoring_settings, players_db=players)
     
     rostered_ids = set()
     for r in rosters:
@@ -286,32 +371,93 @@ def analyze_waivers(username, league_id):
         years = max(p_stats.get("years_played", 1), 1)
         pts_avg = round(p_stats.get("pts", 0) / years, 1)
         
-        years_exp = p.get("years_exp") or 0
+        name = f"{p.get('first_name')} {p.get('last_name')}"
+        pos = p.get("position", "UNK")
         age = p.get("age") or 0
+        years_exp = p.get("years_exp")
+        years_exp = years_exp if years_exp is not None else 0
+        rank = p.get("search_rank")
+        depth = p.get("depth_chart_order")
+        team = p.get("team")
         
-        # Dynasty Drop Logic: Protect youth (<= 2 years exp or age < 25)
-        # Heavily penalize old players, no team, or very low points for veterans
-        drop_score = pts_avg
-        if p.get("team") in [None, "FA"]:
-            drop_score -= 100 # Huge penalty for no team
-        if age >= 30:
-            drop_score -= 50
-        if years_exp <= 2 or age < 25:
-            drop_score += 100 # Protect youth
+        # Advanced Dynasty Drop Score (ADDS) Algorithm
+        adds = pts_avg
+        
+        # 1. Consensus Market Value (Search Rank)
+        if rank is not None:
+            if rank <= 50:
+                adds += 150
+            elif rank <= 150:
+                adds += 100
+            elif rank <= 300:
+                adds += 50
+            elif rank >= 999:
+                adds -= 30
+        else:
+            adds -= 40
+            
+        # 2. Position Scarcity
+        if pos == "QB":
+            adds += 100
+        elif pos == "TE":
+            adds += 30
+            
+        # 3. Depth Chart Role
+        if depth is not None:
+            if depth == 1:
+                adds += 50
+            elif depth == 2:
+                adds += 10
+            elif depth >= 3:
+                adds -= 20
+        else:
+            if years_exp > 0:
+                adds -= 30
+                
+        # 4. Youth Protection & Age Penalties
+        if years_exp == 0:
+            adds += 120
+        elif years_exp == 1 or age < 24:
+            adds += 80
+        elif years_exp == 2 or age == 24:
+            adds += 50
+            
+        if pos in ["RB", "WR"]:
+            if age >= 29:
+                adds -= 30
+            if age >= 31:
+                adds -= 70
+        elif pos in ["QB", "TE"]:
+            if age >= 32:
+                adds -= 30
+            if age >= 34:
+                adds -= 70
+        elif pos in ["LB", "DB", "DL", "DE", "DT", "CB", "S"]:
+            if age >= 29:
+                adds -= 25
+            if age >= 31:
+                adds -= 60
+                
+        # 5. NFL Free Agent Penalty
+        if team in [None, "FA"]:
+            adds -= 120
             
         my_players_stats.append({
-            "name": f"{p.get('first_name')} {p.get('last_name')}",
-            "pos": p.get("position", "UNK"),
-            "team": p.get("team", "FA"),
+            "name": name,
+            "pos": pos,
+            "team": team or "FA",
             "pts": pts_avg,
             "age": age,
-            "drop_score": drop_score
+            "exp": years_exp,
+            "rank": rank or "N/A",
+            "depth": depth or "N/A",
+            "adds": round(adds, 1)
         })
         
-    my_players_stats.sort(key=lambda x: x["drop_score"])
+    my_players_stats.sort(key=lambda x: x["adds"])
     for p in my_players_stats[:8]:
-        if p['drop_score'] < 50: # Only show actual liabilities
-            print(f"DROP: {p['name']} ({p['pos']} - {p['team']}) - Age {p['age']} | 3-Yr Pts: {p['pts']}")
+        status = " [LIABILITY]" if p['adds'] < 130 else ""
+        print(f"DROP Candidate:{status} {p['name']} ({p['pos']} - {p['team']}) - Age {p['age']} | 3-Yr Avg Pts: {p['pts']} | Consensus Rank: {p['rank']} | ADDS: {p['adds']}")
 
     print("\n--- TOP WAIVER TARGETS ---")
     available = []
@@ -320,8 +466,10 @@ def analyze_waivers(username, league_id):
         if p.get("status") not in ["Active", "Injured Reserve", "PUP", None]: continue
         
         pos = p.get("position")
-        if not is_idp and pos in ['LB', 'DB', 'DL', 'DE', 'DT', 'CB', 'S']: continue
-        if pos in ['K', 'DEF']: continue # Ignore kickers and defenses
+        valid_positions = ['QB', 'RB', 'WR', 'TE']
+        if is_idp:
+            valid_positions.extend(['LB', 'DB', 'DL', 'DE', 'DT', 'CB', 'S'])
+        if pos not in valid_positions: continue
         
         years_exp = p.get("years_exp") or 0
         if p.get("team") in [None, "FA"] and years_exp > 2: continue

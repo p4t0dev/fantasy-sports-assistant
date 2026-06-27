@@ -1,0 +1,138 @@
+--- DRAFT OVERVIEW ---
+Name: ROMANIAN FOOTBALL LEAGUE
+Status: drafting
+Teams: 32, Rounds: 5
+Your Draft Slot: 21
+Note: This is a ROOKIE ONLY draft. Ranks will be adjusted accordingly.
+Strategy Reminder: For SF QBs, target paths behind bridge veterans. For blocked elite WRs, use the Taxi Squad.
+Last pick made: Round 3, Pick 20 (Overall 84)
+
+--- LEAGUE & ROSTER ---
+Starter Requirements: QB=1, RB=2, WR=3, TE=2, FLEX=2, SUPER_FLEX=0
+Scoring: PPR=0.5, TE Premium=0.5, Pass TD=4.0
+Your Roster Breakdown (56 players):
+  CB: 3
+  DB: 7
+  DE: 1
+  DL: 3
+  DT: 4
+  K: 1
+  LB: 7
+  QB: 4
+  RB: 7
+  TE: 4
+  WR: 15
+
+--- ROSTER QUALITY ANALYSIS (3-Year Avg: 2023-2025) ---
+Top LBs by 3-Year Avg Production:
+  Carson Schwesinger (Age 23): 277.0 pts/yr (16.0 GP/yr). Avg Tackles: 146.0
+  SirVocea Dennis (Age 26): 77.3 pts/yr (11.0 GP/yr). Avg Tackles: 42.7
+  Chris Braswell (Age 24): 28.2 pts/yr (17.0 GP/yr). Avg Tackles: 19.0
+Top RBs by 3-Year Avg Production:
+  Rachaad White (Age 27): 203.5 pts/yr (16.7 GP/yr). Avg Receptions: 51.7
+  Bucky Irving (Age 23): 191.4 pts/yr (13.5 GP/yr). Avg Receptions: 38.5
+  Sean Tucker (Age 24): 55.1 pts/yr (15.0 GP/yr). Avg Receptions: 6.3
+Top TEs by 3-Year Avg Production:
+  Cade Otton (Age 27): 126.4 pts/yr (15.7 GP/yr). Avg Receptions: 55.0
+  Drew Ogletree (Age 27): 24.8 pts/yr (14.7 GP/yr). Avg Receptions: 7.3
+  Payne Durham (Age 25): 15.8 pts/yr (15.3 GP/yr). Avg Receptions: 5.7
+Top WRs by 3-Year Avg Production:
+  Mike Evans (Age 32): 202.6 pts/yr (13.0 GP/yr). Avg Receptions: 61.0
+  Chris Godwin (Age 30): 143.3 pts/yr (11.0 GP/yr). Avg Receptions: 55.3
+  Jalen McMillan (Age 24): 82.7 pts/yr (8.5 GP/yr). Avg Receptions: 24.5
+
+--- AVAILABLE TOP PLAYERS ---
+Rookie Rank 1: Genesis Smith (DB - LAC) - Age: 21 - ID: 13399
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Genesis+Smith
+      Depth Chart: SS - String: 2
+      Full LAC DB Depth Chart: 1: Derwin James | 1: Tarheeb Still | 1: Tony Jefferson | 2: Deane Leonard | 2: Genesis Smith | 2: Nikko Reed | 2: RJ Mickens | 3: Eric Rogers | 3: Kendall Williamson | UNK: Devin Grant | UNK: Emany Johnson | UNK: Isas Waxter | UNK: Noah Avinger
+Rookie Rank 2: Montana Lemonious-Craig (WR - None) - Age: 23 - ID: 13222
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Montana+Lemonious-Craig
+Rookie Rank 3: Anthony Lucas (DL - DET) - Age: None - ID: 13358
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Anthony+Lucas
+Rookie Rank 4: Moose Muhammad (WR - None) - Age: 24 - ID: 12966
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Moose+Muhammad
+Rookie Rank 5: Keionte Scott (DB - TB) - Age: 24 - ID: 13382
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Keionte+Scott
+      Depth Chart: NB - String: 2
+      Full TB DB Depth Chart: 1: Antoine Winfield | 1: Benjamin Morrison | 1: Jacob Parrish | 1: Tykee Smith | 1: Zyon McCollum | 2: Chase Lucas | 2: Keionte Scott | 2: Miles Killebrew | 2: Rashad Wisdom | 3: JJ Roberts | UNK: Augie Contressa | UNK: Ayden Garnes | UNK: Damarion Williams | UNK: Deshawn McCuin | UNK: Ja'Qurious Conley | UNK: Jy Gilmore | UNK: Marcus Banks
+Rookie Rank 6: Zakhari Franklin (WR - None) - Age: 25 - ID: 13161
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Zakhari+Franklin
+Rookie Rank 7: Brent Austin (DB - DEN) - Age: None - ID: 13393
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Brent+Austin
+      Depth Chart: DB - String: UNK
+      Full DEN DB Depth Chart: 1: Brandon Jones | 1: Riley Moss | 1: Talanoa Hufanga | 2: Devon Key | 2: JL Skinner | 2: Jahdae Barron | 2: Kris Abrams-Draine | 3: Miles Scott | 3: Tycen Anderson | UNK: Ahmari Harvey | UNK: Brandon Hill | UNK: Brent Austin | UNK: DQ Smith | UNK: Delarrin Turner-Yell | UNK: Ha Ha Clinton-Dix | UNK: Ian Conerly-Goodly | UNK: Jahari Rogers | UNK: Kekoura Tarnue | UNK: Parker Robertson | UNK: Paul Manning | UNK: Randy Franklin | UNK: Rojesterman Farris | UNK: William Wright
+Rookie Rank 8: Treydan Stukes (DB - LV) - Age: 24 - ID: 13398
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Treydan+Stukes
+      Depth Chart: NB - String: 1
+      Full LV DB Depth Chart: 1: Darien Porter | 1: Isaiah Pola-Mao | 1: Jeremy Chinn | 1: Treydan Stukes | 2: Dalton Johnson | 2: Jermod McCoy | 2: Tristin McCollum | UNK: Devin Lafayette | UNK: Devyn Perkins | UNK: Kavon Frazier | UNK: Natrell Jamerson | UNK: Tanner Wall
+Rookie Rank 9: Chris Johnson (DB - MIA) - Age: 21 - ID: 13370
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Chris+Johnson
+      Depth Chart: LCB - String: 1
+      Full MIA DB Depth Chart: 1: Chris Johnson | 1: Dante Trader | 1: Lonnie Johnson | 2: Alex Austin | 2: Jordan Colbert | 2: JuJu Brents | 2: Zayne Anderson | 3: Michael Taaffe | 3: Ronnie Harrison | UNK: Chris Milton | UNK: Ethan Robinson | UNK: Kendall Sheffield | UNK: Louis Moore
+Rookie Rank 10: D'Angelo Ponds (DB - NYJ) - Age: 21 - ID: 13386
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=D%27Angelo+Ponds
+      Depth Chart: NB - String: 1
+      Full NYJ DB Depth Chart: 1: Andre Cisco | 1: Brandon Stephens | 1: D'Angelo Ponds | 1: Minkah Fitzpatrick | 2: Azareye'h Thomas | 2: Dane Belton | 2: Jarvis Brownlee | 2: Malachi Moore | 3: Dean Clark | 3: Jordan Clark | 3: Keidron Smith | 4: VJ Payne
+Rookie Rank 11: Joshua Josephs (DL - WAS) - Age: 22 - ID: 13366
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Joshua+Josephs
+      Depth Chart: RDE - String: 3
+      Full WAS DL Depth Chart: 2: Drake Jackson | 3: Jer'Zhan Newton | 3: Joshua Josephs | 4: D.J. Davidson | 4: Javontae Jean-Baptiste | UNK: Jeffrey M'ba
+Rookie Rank 12: Julian Neal (DB - SEA) - Age: 23 - ID: 13396
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Julian+Neal
+      Depth Chart: RCB - String: 2
+      Full SEA DB Depth Chart: 1: Devon Witherspoon | 1: Josh Jobe | 1: Julian Love | 1: Nick Emmanwori | 1: Ty Okada | 2: Bud Clark | 2: Julian Neal | 2: Michael Dansby | 3: D'Anthony Bell | UNK: AJ Finley | UNK: Marc Stampley | UNK: Maxen Hook | UNK: Myles Rowser
+Rookie Rank 13: Mason Narcisse (DL - None) - Age: 24 - ID: 13133
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Mason+Narcisse
+Rookie Rank 14: Diwun Black (DE - None) - Age: None - ID: 13076
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Diwun+Black
+Rookie Rank 15: Fentrell Cypress (CB - None) - Age: 24 - ID: 12846
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Fentrell+Cypress
+Rookie Rank 16: Tuasivi Nomura (LB - None) - Age: None - ID: 13093
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Tuasivi+Nomura
+Rookie Rank 17: Kent Shelby (WR - None) - Age: None - ID: 5357
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Kent+Shelby
+Rookie Rank 18: Brett Gabbert (QB - None) - Age: 25 - ID: 13221
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Brett+Gabbert
+Rookie Rank 19: Adam Randall (RB - BAL) - Age: 21 - ID: 13302
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Adam+Randall
+      Depth Chart: RB - String: UNK
+      Full BAL RB Depth Chart: 1: Derrick Henry | 2: Justice Hill | 3: Rasheen Ali | UNK: Adam Randall | UNK: Dontae McMillan | UNK: Elijah Tau-Tolliver
+Rookie Rank 20: Behren Morton (QB - NE) - Age: 24 - ID: 13295
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Behren+Morton
+      Depth Chart: QB - String: UNK
+      Full NE QB Depth Chart: 1: Drake Maye | 2: Tommy DeVito | UNK: Behren Morton
+Rookie Rank 21: Lincoln Pare (RB - IND) - Age: None - ID: 13352
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Lincoln+Pare
+Rookie Rank 22: Julian Fleming (WR - None) - Age: 25 - ID: 13108
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Julian+Fleming
+Rookie Rank 23: CJ Daniels (WR - LAR) - Age: 24 - ID: 13270
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=CJ+Daniels
+      Depth Chart: RWR - String: UNK
+      Full LAR WR Depth Chart: 1: Puka Nacua | 2: Davante Adams | 3: Jordan Whittington | 4: Konata Mumpfield | 5: Xavier Smith | 6: Tyler Scott | UNK: Brennan Presley | UNK: CJ Daniels | UNK: Mario Williams | UNK: Tru Edwards
+Rookie Rank 24: Josh Cuevas (TE - BAL) - Age: 22 - ID: 13273
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Josh+Cuevas
+      Depth Chart: TE - String: UNK
+      Full BAL TE Depth Chart: 1: Mark Andrews | 2: Durham Smythe | UNK: Barrett Burns | UNK: Josh Cuevas | UNK: Matthew Hibner | UNK: Ty Pezza
+Rookie Rank 25: Jack Endries (TE - CIN) - Age: 22 - ID: 13282
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Jack+Endries
+      Depth Chart: TE - String: UNK
+      Full CIN TE Depth Chart: 1: Mike Gesicki | 2: Drew Sample | 3: Cam Grandy | 4: Tanner Hudson | 5: Erick All | UNK: Jack Endries | UNK: Josh Kattus
+Rookie Rank 26: Noah Thomas (WR - CIN) - Age: None - ID: 13318
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Noah+Thomas
+      Depth Chart: SWR - String: UNK
+      Full CIN WR Depth Chart: 1: Ja'Marr Chase | 2: Tee Higgins | 3: Andrei Iosivas | 4: Mitch Tinsley | 5: Charlie Jones | 5: Ke'Shawn Williams | 6: Kendric Pryor | UNK: Colbie Young | UNK: Dohnte Meyers | UNK: Jordan Moore | UNK: Noah Thomas | UNK: Xavier Johnson
+Rookie Rank 27: Miller Moss (QB - CHI) - Age: None - ID: 13310
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Miller+Moss
+      Depth Chart: QB - String: UNK
+      Full CHI QB Depth Chart: 1: Caleb Williams | 2: Tyson Bagent | 3: Case Keenum | UNK: Miller Moss
+Rookie Rank 28: J.J. Jones (WR - None) - Age: None - ID: 12913
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=J.J.+Jones
+Rookie Rank 29: Dae'Quan Wright (TE - PHI) - Age: 22 - ID: 13331
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Dae%27Quan+Wright
+      Depth Chart: TE - String: UNK
+      Full PHI TE Depth Chart: 1: Dallas Goedert | 2: Grant Calcaterra | 3: Johnny Mundt | 4: Stone Smartt | 5: Cameron Latu | 6: E.J. Jenkins | UNK: Dae'Quan Wright | UNK: Eli Stowers
+Rookie Rank 30: Jaren Kanak (TE - TEN) - Age: 22 - ID: 13422
+      College Stats Lookup: https://www.sports-reference.com/cfb/search/search.fcgi?search=Jaren+Kanak
+      Depth Chart: TE - String: UNK
+      Full TEN TE Depth Chart: 1: Gunnar Helm | 2: Daniel Bellinger | 3: David Martin-Robinson | 4: Joel Wilson | 4: Kylen Granson | UNK: Donnie Ernsberger | UNK: Jaren Kanak
