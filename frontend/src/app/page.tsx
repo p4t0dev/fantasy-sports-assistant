@@ -37,16 +37,30 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [manualId, setManualId] = useState("");
   const [manualLoading, setManualLoading] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
 
   const username = usernameInput ?? cached?.username ?? "p4t0b4ll3rs";
   const season = seasonInput ?? cached?.season ?? "all";
   const sport = sportInput ?? cached?.sport ?? "nfl";
   const baseLeagues = fetched?.leagues ?? cached?.leagues ?? [];
-  const leagues = [
+  const allLeagues = [
     ...extraLeagues,
     ...baseLeagues.filter((l) => !extraLeagues.some((e) => e.league_id === l.league_id)),
   ];
-  const drafts = fetched?.drafts ?? cached?.drafts ?? [];
+  // "Alle Saisons" pulls three years of listings, so leagues finished long ago
+  // sat next to live ones with nothing to tell them apart. They stay reachable,
+  // just not in the way.
+  const archivedCount = allLeagues.filter((l) => l.archived).length;
+  const leagues = showArchive ? allLeagues : allLeagues.filter((l) => !l.archived);
+  const allDrafts = fetched?.drafts ?? cached?.drafts ?? [];
+  // A draft is only shown next to its league. Sleeper keeps returning drafts
+  // for leagues that are long gone from the league listing — the user left
+  // them, or they are old seasons — and rendering those as standalone cards
+  // put three dozen dead leagues on the dashboard under a "Mock Draft" label
+  // they never earned. A real mock draft has no league at all.
+  const drafts = allDrafts.filter(
+    (d) => !d.league_id || leagues.some((l) => l.league_id === d.league_id)
+  );
   const cachedAt = fetched ? null : cached?.savedAt ?? null;
 
   const setUsername = setUsernameInput;
@@ -206,6 +220,16 @@ export default function Dashboard() {
                 zwischengespeichert {ageLabel(cachedAt)} · „Ligen laden“ holt neu
               </span>
             )}
+            {archivedCount > 0 && (
+              <button
+                onClick={() => setShowArchive((v) => !v)}
+                className="ml-auto px-3 py-1 rounded-md text-xs font-semibold border bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
+              >
+                {showArchive
+                  ? `Archiv ausblenden (${archivedCount})`
+                  : `Archiv einblenden (${archivedCount})`}
+              </button>
+            )}
           </div>
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {leagues.map((league) => {
@@ -214,16 +238,25 @@ export default function Dashboard() {
               return (
                 <div
                   key={league.league_id}
-                  className="glass-panel overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] flex flex-col h-full"
+                  className={`glass-panel overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] flex flex-col h-full ${
+                    league.archived ? "opacity-60" : ""
+                  }`}
                 >
                   <div className="px-6 py-5 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <h3 className="text-lg leading-6 font-medium text-white truncate" title={league.name}>
                         {league.name}
                       </h3>
-                      <span className="shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-900/50 text-blue-300 border border-blue-800">
-                        {league.total_rosters} Teams
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {league.archived && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-gray-800 text-gray-400 border border-gray-700">
+                            Archiv
+                          </span>
+                        )}
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-900/50 text-blue-300 border border-blue-800">
+                          {league.total_rosters} Teams
+                        </span>
+                      </div>
                     </div>
                     <div className="mt-4 flex items-center justify-between text-sm text-gray-400">
                       <p>Saison: {league.season}</p>

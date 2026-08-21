@@ -26,6 +26,7 @@ firebase-debug.*.log
 players.json
 players_*.json
 stats_*.json
+projections_*.json
 college_stats.json
 
 # Packaged skill archives

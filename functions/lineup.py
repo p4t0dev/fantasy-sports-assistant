@@ -110,7 +110,11 @@ def positional_needs(players, roster_positions, replacement, value_of, slots_per
       how many slots the position has to cover. This is the "am I thin here?"
       question, and it is the one a manager actually asks.
 
-    The reported severity is the worse of the two.
+    The reported severity is the worse of the two, with one override: *gain* is
+    the only one of the two that measures the lineup directly, so a position it
+    scores at zero can never be reported as critical. Without that override a
+    deep league's high replacement bar made a normal roster look uniformly
+    broken - every position red, on a lineup with no hole in it.
     """
     base_lineup = build_lineup(players, roster_positions, value_of)
     base = lineup_value(base_lineup, value_of)
@@ -133,24 +137,40 @@ def positional_needs(players, roster_positions, replacement, value_of, slots_per
         ratio = gain / baseline if baseline else 0
         gain_severity = next((s for t, s in SEVERITY_THRESHOLDS if ratio >= t), 0)
 
+        empty = sum(1 for slot, p in base_lineup
+                    if p is None and pos in slot_accepts(slot))
+
         eligible = [p for p in players if pos in p["elig"]]
         startable = [p for p in eligible if value_of(p) >= baseline]
-        slots = max(1, int(round(slots_per_pos.get(pos, 1))))
-        if len(startable) < slots:
-            depth_severity = 3
-        elif len(startable) == slots:
-            depth_severity = 2
-        elif len(startable) == slots + 1:
-            depth_severity = 1
+        # `slots_per_pos` is flex-weighted demand, so "3 WR + 2 FLEX" arrives as
+        # 3.9. Treating that as four dedicated WR slots is what demanded six
+        # above-replacement WRs before a roster counted as healthy. Own slots
+        # are the hard requirement; flex demand is the cushion on top.
+        own = fixed.get(pos, 0)
+        demand = max(own, int(round(slots_per_pos.get(pos, 1))))
+
+        if empty or len(startable) < own:
+            depth_severity = 3     # a start this position owns cannot be covered
+        elif len(startable) < demand:
+            depth_severity = 2     # own slots covered, nothing left for flex
+        elif len(startable) <= demand:
+            depth_severity = 1     # covered exactly, no spare body
         else:
             depth_severity = 0
 
         severity = max(gain_severity, depth_severity)
+
+        # The decisive check, and the one that was missing: `gain` is the direct
+        # measurement of whether this position can still be improved. When a
+        # league-average starter would add nothing and no slot is empty, the
+        # lineup is covered here — whatever a headcount of the bench says. That
+        # combination was reporting "kritisch" on positions with gain 0.0, which
+        # is why every position on a normal roster came back red.
+        if not empty and gain_severity == 0:
+            severity = min(severity, 1)
+
         if not severity:
             continue
-
-        empty = sum(1 for slot, p in base_lineup
-                    if p is None and pos in slot_accepts(slot))
 
         needs.append({
             "pos": pos,
@@ -158,19 +178,19 @@ def positional_needs(players, roster_positions, replacement, value_of, slots_per
             "empty_slots": empty,
             "gain": round(gain, 1),
             "ratio": round(ratio, 2),
-            "slots": slots,
+            "slots": demand,
             "depth": len(eligible),
             "startable": len(startable),
-            "fixed_slots": fixed.get(pos, 0),
-            "reason": _reason(pos, severity, slots, fixed.get(pos, 0),
-                              len(startable), len(eligible), empty),
+            "fixed_slots": own,
+            "reason": _reason(pos, severity, demand, own,
+                              len(startable), len(eligible), empty, gain_severity),
         })
 
     needs.sort(key=lambda n: (-n["severity"], -n["gain"]))
     return needs
 
 
-def _reason(pos, severity, slots, fixed, startable, depth, empty=0):
+def _reason(pos, severity, slots, fixed, startable, depth, empty=0, gain_severity=0):
     # Say what the league actually starts. "2 Startplätze" for a league with one
     # RB slot plus two FLEX is technically the flex-weighted demand, but reads
     # as a factual error to anyone looking at their lineup.
@@ -180,17 +200,26 @@ def _reason(pos, severity, slots, fixed, startable, depth, empty=0):
         slot_text = f"{fixed} Startplatz" if fixed == 1 else f"{fixed} Startplätze"
     else:
         slot_text = "nur FLEX-Plätze"
-    stem = (f"{startable} von {depth} {pos}-fähigen Spielern über Liga-Startniveau, "
-            f"{slot_text}")
+    detail = (f"{startable} von {depth} {pos}-fähigen Spielern über Liga-Startniveau, "
+              f"{slot_text}")
+    stem = detail
     if severity == 3:
         # An unfilled slot and a slot filled below league level are different
         # problems; saying "ungedeckt" for a filled slot reads as a false claim.
         if empty:
             return f"{stem} — {empty} Startplatz ohne zulässigen Spieler."
-        return f"{stem} — Startplatz nur unter Liga-Niveau besetzt."
+        return f"{stem} — fester Startplatz nur unter Liga-Niveau besetzt."
     if severity == 2:
-        return f"{stem} — kein Backup."
-    return f"{stem} — dünne Absicherung."
+        return f"{stem} — feste Plätze gedeckt, für FLEX reicht es nicht."
+    # Severity 1 covers two different situations and it is worth saying which.
+    # The conclusion leads, the headcount follows: "0 von 5 über Startniveau"
+    # in front of "Aufstellung gedeckt" reads as a contradiction even when both
+    # halves are true, and that phrasing is a large part of why the whole view
+    # felt alarmist.
+    if gain_severity == 0:
+        return (f"Aufstellung gedeckt — ein Liga-Durchschnitts-{pos} würde sie "
+                f"nicht verbessern. ({detail})")
+    return f"Aufstellung gedeckt, aber ohne Reserve. ({detail})"
 
 
 def lineup_report(players, roster_positions, value_of):

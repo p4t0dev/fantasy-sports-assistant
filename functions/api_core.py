@@ -7,6 +7,7 @@ import urllib.parse
 import sleeper_api
 import signals
 import lineup
+import projections
 
 def fetch_espn_college_stats(player_name):
     """
@@ -178,6 +179,47 @@ def players_file(sport):
 
 def stats_file(sport, year):
     return f"stats_{year}.json" if sport == "nfl" else f"stats_{sport}_{year}.json"
+
+
+def projections_file(sport, year):
+    return f"projections_{sport}_{year}.json"
+
+
+def current_season(sport):
+    state = sleeper_api.get_state(sport) or {}
+    return str(state.get("league_season") or state.get("season") or "2026")
+
+
+def load_projections(sport="nfl"):
+    """Season projections, from the daily snapshot when it exists and live
+    otherwise. A missing snapshot must not silently disable the forward-looking
+    half of the model, so the first request in a cold container pays for a
+    fetch and everything after it is served from the JSON cache."""
+    filename = projections_file(sport, current_season(sport))
+    data = load_json(filename)
+    if data:
+        return data
+    data = projections.fetch_season_projections(sport, current_season(sport))
+    if data:
+        _JSON_CACHE[filename] = (time.time(), data)
+    return data
+
+
+def projected_points(sport, scoring_settings, players_db):
+    """Projected season total per player, scored under this league's settings.
+
+    Sleeper ships projections on the same stat schema as the stats files, so the
+    league's own scoring runs over them unchanged - there is no second scoring
+    model to keep in sync.
+    """
+    raw = load_projections(sport)
+    out = {}
+    for pid, p_stats in (raw or {}).items():
+        player = (players_db or {}).get(str(pid))
+        pos = player.get("position") if player else None
+        points = calculate_custom_score(p_stats, pos, scoring_settings, sport)
+        out[str(pid)] = round(points * projections.season_factor(p_stats, sport), 2)
+    return out
 
 
 def load_team_strength():
@@ -386,9 +428,24 @@ def _weighted_production(p_stats):
     return p_stats.get("pts", 0) / years
 
 
-def _role_multiplier(player, signal=None):
+def _role_multiplier(player, signal=None, projected=False):
     """Depth chart role. A backup is worth less, but not 90% less — and a man
-    who just moved up because the starter went down is not a backup any more."""
+    who just moved up because the starter went down is not a backup any more.
+
+    With a projection in hand this must not fire at full strength: the
+    projection already prices the depth chart, so multiplying by it again
+    charged every backup twice and pushed rookies to zero. What a projection
+    cannot know is a job that opened up after it was published, so in that case
+    the role signal is kept as an upgrade only.
+    """
+    if projected:
+        opportunity = (signal or {}).get("opportunity", {}).get("score", 0)
+        if opportunity >= 3:
+            return 1.15
+        if opportunity == 2:
+            return 1.05
+        return 1.0
+
     order = player.get("depth_chart_order")
     if sport_of(player) == "nba":
         # Sleeper only fills the NBA depth chart for a fraction of the league,
@@ -488,25 +545,55 @@ def _prospect_component(player, college_data):
     return base + bonus
 
 
-def calculate_rvs(player, p_stats, signal=None):
+def expected_points(player, p_stats, signal=None, proj=None):
+    """Points this player is expected to put on the board this season, in the
+    league's own scoring.
+
+    Deliberately *not* position normalised. RVS scales QBs down and TEs up so
+    that assets are comparable across positions, which is right for ranking a
+    trade board and wrong for filling a lineup: a FLEX slot compares real
+    points. Building the lineup off RVS meant a TE projected for 150 beat an RB
+    projected for 170, and a 333-point QB lost his SUPER_FLEX seat to a
+    292-point RB. Availability still applies — a player who is out scores
+    nothing whatever his talent says.
+    """
+    projected = proj is not None
+    pts = proj if projected else _weighted_production(p_stats)
+    pts *= _role_multiplier(player, signal, projected)
+    if signal:
+        pts *= signal["injury"]["redraft_mult"]
+    return round(pts, 1)
+
+
+def calculate_rvs(player, p_stats, signal=None, proj=None):
     """Redraft Value Score — what this player is worth for the current season.
-    Short-term availability and depth chart role dominate here."""
-    rvs = _weighted_production(p_stats)
+
+    A projection is the answer to exactly this question, so when one exists it
+    *is* the production term. History only stands in when no projection was
+    published. Team strength and depth chart role are skipped in the projected
+    case for the same reason: Sleeper already priced both, and applying them a
+    second time was double counting.
+    """
+    projected = proj is not None
+    rvs = proj if projected else _weighted_production(p_stats)
     rvs *= POSITION_NORMALIZATION.get(player.get("position"), 1.0)
-    rvs *= _role_multiplier(player, signal)
+    rvs *= _role_multiplier(player, signal, projected)
 
-    team = player.get("team")
-    tiers = load_team_strength()
-    if team in tiers:
-        rvs *= tiers[team]
+    if not projected:
+        team = player.get("team")
+        tiers = load_team_strength()
+        if team in tiers:
+            rvs *= tiers[team]
 
+    # A designation published after the projection is the freshest thing we
+    # have, so this one still applies either way.
     if signal:
         rvs *= signal["injury"]["redraft_mult"]
 
     return round(rvs, 1)
 
 
-def calculate_dvs(player, p_stats, college_data, signal=None):
+def calculate_dvs(player, p_stats, college_data, signal=None, proj=None):
     """Dynasty Value Score — long-term asset value.
 
     Built from independent components so that the additive market/prospect value
@@ -516,9 +603,15 @@ def calculate_dvs(player, p_stats, college_data, signal=None):
     pos = player.get("position")
     age = player.get("age") or 25
 
-    production = _weighted_production(p_stats) * POSITION_NORMALIZATION.get(pos, 1.0)
+    # Dynasty spans more than the coming season, so the multi-year record keeps
+    # the larger share - but a rookie with no record at all is not worth zero,
+    # which is what a purely historical term claimed.
+    projected = proj is not None
+    history = _weighted_production(p_stats)
+    production = 0.55 * history + 0.45 * proj if projected else history
+    production *= POSITION_NORMALIZATION.get(pos, 1.0)
     # Long-term value cares about role, but far less than the current season does.
-    production *= 0.5 + 0.5 * _role_multiplier(player, signal)
+    production *= 0.5 + 0.5 * _role_multiplier(player, signal, projected)
 
     dvs = production + _market_component(player) + _prospect_component(player, college_data)
     dvs *= _age_multiplier(pos, age)
@@ -574,13 +667,13 @@ def starter_requirements(roster_positions):
 
 
 def replacement_levels(rosters, players, stats, college_data, sigs, req, num_teams,
-                       sport="nfl", fallback_pool=True):
+                       sport="nfl", fallback_pool=True, projs=None):
     """League-relative baseline per position: the value of the last player who
     would still be starting somewhere in this league.
 
-    Players are counted at every position they are eligible for, and the RVS and
-    DVS baselines are ranked independently - reading an RVS off a DVS-sorted list
-    produced an arbitrary number.
+    Players are counted at every position they are eligible for, and each metric
+    is ranked independently - reading an RVS off a DVS-sorted list produced an
+    arbitrary number.
     """
     by_pos = {}
     for roster in rosters or []:
@@ -590,8 +683,10 @@ def replacement_levels(rosters, players, stats, college_data, sigs, req, num_tea
                 continue
             p_stats = stats.get(str(pid), {})
             sig = sigs.get(str(pid))
-            entry = (calculate_dvs(player, p_stats, college_data, sig),
-                     calculate_rvs(player, p_stats, sig))
+            proj = (projs or {}).get(str(pid))
+            entry = (calculate_dvs(player, p_stats, college_data, sig, proj),
+                     calculate_rvs(player, p_stats, sig, proj),
+                     expected_points(player, p_stats, sig, proj))
             for pos in lineup.player_positions(player):
                 by_pos.setdefault(pos, []).append(entry)
 
@@ -614,8 +709,10 @@ def replacement_levels(rosters, players, stats, college_data, sigs, req, num_tea
                     continue
                 p_stats = stats.get(str(pid), {})
                 sig = sigs.get(str(pid))
-                entry = (calculate_dvs(player, p_stats, college_data, sig),
-                         calculate_rvs(player, p_stats, sig))
+                proj = (projs or {}).get(str(pid))
+                entry = (calculate_dvs(player, p_stats, college_data, sig, proj),
+                         calculate_rvs(player, p_stats, sig, proj),
+                         expected_points(player, p_stats, sig, proj))
                 for pos in positions:
                     by_pos.setdefault(pos, []).append(entry)
 
@@ -623,47 +720,60 @@ def replacement_levels(rosters, players, stats, college_data, sigs, req, num_tea
     for pos, values in by_pos.items():
         starters = max(1, int(round(req.get(pos, 1) * max(1, num_teams))))
         idx = min(len(values) - 1, starters - 1)
-        dvs_sorted = sorted(values, key=lambda v: -v[0])
-        rvs_sorted = sorted(values, key=lambda v: -v[1])
-        levels[pos] = {"dvs": dvs_sorted[idx][0], "rvs": rvs_sorted[idx][1]}
+        levels[pos] = {
+            "dvs": sorted(values, key=lambda v: -v[0])[idx][0],
+            "rvs": sorted(values, key=lambda v: -v[1])[idx][1],
+            "pts": sorted(values, key=lambda v: -v[2])[idx][2],
+        }
     return levels
 
 
-def replacement_rvs(levels):
-    return {pos: lv["rvs"] for pos, lv in levels.items()}
+def replacement_points(levels):
+    """Baseline in real league points — the bar a lineup decision is measured
+    against."""
+    return {pos: lv["pts"] for pos, lv in levels.items()}
 
 
 def roster_needs(my_players, roster_positions, levels):
     """Needs come from the lineup and from real positional depth, not from a
     headcount of primary positions."""
     return lineup.positional_needs(
-        my_players, roster_positions, replacement_rvs(levels), _start_value,
+        my_players, roster_positions, replacement_points(levels), _start_value,
         starter_requirements(roster_positions))
 
 
 def _start_value(player):
     """What a player is worth to *this week's* lineup.
 
-    Startability is a redraft question. Measuring it with DVS is why four
-    productive RBs read as "0 startable RB": the dynasty age curve had flattened
-    them, though it says nothing about whether you can start them on Sunday.
+    Real projected points, not RVS: startability is a points question, and the
+    position normalisation baked into RVS distorts every cross-position slot.
     """
-    return player.get("rvs", 0) or 0
+    return player.get("pts", 0) or 0
 
 
-def waiver_score(dvs, rvs, sig, need_severity):
+def waiver_score(dvs, pts, sig, need_severity, replacement_pts=0):
     """Waiver ranking is not dynasty ranking: usable value this season plus the
     news that just changed it. A rank-999 backup who inherits a starting job
-    outranks a well-known name whose situation did not move."""
-    base = 0.6 * rvs + 0.4 * dvs
+    outranks a well-known name whose situation did not move.
+
+    Anchored on projected points *above the position's replacement level*, since
+    that is the only number that says whether a pickup can do anything for a
+    lineup. The market terms are modifiers on that value, not a substitute for
+    it: a flat +160 for trending used to exceed the entire base score of a
+    fringe player, so the board filled with whoever was hot regardless of
+    whether they projected for anything at all.
+    """
     opportunity = sig["opportunity"]["score"]
     intensity = sig["trend"].get("intensity") or 0
     net = sig["trend"].get("net") or 0
 
-    score = base * (1 + 0.20 * opportunity) * (1 + 0.40 * intensity)
-    score += 160 * intensity   # live market heat: sharp, fires for a handful of players
-    score += 20 * opportunity  # depth chart move: noisier, rests on the snapshot
-    score += 25 * need_severity
+    surplus = pts - (replacement_pts or 0)
+    base = max(0.0, surplus) + 0.35 * pts + 0.25 * dvs
+
+    score = base * (1 + 0.25 * opportunity) * (1 + 0.35 * intensity)
+    score += 40 * intensity    # live market heat: sharp, fires for a handful
+    score += 15 * opportunity  # depth chart move: noisier, rests on the snapshot
+    score += 20 * need_severity
     if net < 0:
         score *= 0.85  # the market is moving away from him
     return round(score, 1)
@@ -694,22 +804,29 @@ def faab_recommendation(sig, need_severity, budget_left, is_upgrade):
     }
 
 
-def drop_protection(player, dvs, rvs, sig, levels):
+def drop_protection(player, dvs, pts, sig, levels):
     """Reasons never to recommend dropping someone.
 
     Guards the case that made the old engine suggest dropping Ricky Pearsall -
     a 25 year old first round WR - because a temporary IR stint and a preseason
     depth chart entry had wiped out 90% of his score.
+
+    Levels are keyed by fantasy position (DB, DL, LB), so they have to be looked
+    up that way. Keying by the real-life position meant every cornerback and
+    edge rusher missed the table, read a threshold of zero, and came back
+    "liefert noch Startwert" - which protected the entire IDP half of a roster
+    from ever being offered as a drop.
     """
     years_exp = player.get("years_exp") or 0
     rank = player.get("search_rank") or 999999
-    threshold = levels.get(player.get("position"), {}).get("dvs", 0)
+    level = levels.get(canonical_pos(player), {})
+    threshold = level.get("dvs", 0)
 
     if years_exp <= 2 and rank <= 600:
         return "Junges Asset mit Draft-Kapital — halten"
     # An ageing star has little dynasty value left but can still be a weekly
     # starter. Dropping him for a younger bench piece loses points right now.
-    if rvs >= (levels.get(player.get("position"), {}).get("rvs") or 0):
+    if pts >= (level.get("pts") or 0):
         return "Liefert aktuell noch Startwert — halten"
     if sig["injury"]["term"] == "long" and dvs >= threshold * 0.6:
         return "Nur verletzt, nicht wertlos — stashen statt droppen"
@@ -783,8 +900,9 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
         losses.sort(key=lambda l: l[0])
 
         # Ignore rounding-level improvements; a waiver claim costs FAAB and a
-        # roster spot, so a one-point lineup gain is not worth recommending.
-        min_gain = max(3.0, 0.004 * base)
+        # roster spot. The lineup is measured in projected season points now, so
+        # the bar is one too: roughly a point and a half per week.
+        min_gain = max(10.0, 0.01 * base)
 
         best = None
         for gain, target in gains[:8]:
@@ -811,6 +929,7 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
 
         after = lineup.build_lineup(roster, roster_positions, _start_value)
         moves.append({
+            "kind": "lineup",
             "drop": drop,
             "add": target,
             "reason": " ".join(why),
@@ -824,14 +943,101 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
             },
         })
 
+    if len(moves) < max_moves:
+        moves.extend(_depth_moves(roster, pool, roster_positions, used_targets,
+                                  used_drops, max_moves - len(moves), levels))
     return moves
 
 
-def _player_entry(pid, player, stats, college_data, sig, levels, extra=None):
+# A deep roster in a deep league will not find a free agent who beats a starter,
+# and the honest answer to "which claim improves my lineup" is then "none". That
+# is correct and useless: the actual question at that point is which end-of-bench
+# body is worth less than what is sitting on waivers.
+DEPTH_MOVE_MARGIN = 1.25
+
+
+def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit,
+                 levels=None):
+    """Bench upgrades: swap the least valuable droppable player for a clearly
+    better asset, when no move improves the starting lineup at all.
+
+    Two constraints keep this from turning into vandalism:
+
+    - a player who still projects above his position's replacement level is off
+      limits, however flat the dynasty age curve has made him. Without this the
+      engine offered Alvin Kamara for a rookie edge rusher, purely on DVS.
+    - a player added by an earlier move in the same sequence cannot be the drop
+      in a later one, which it happily did - adding a man and dropping him two
+      moves later.
+    """
+    moves = []
+    # Frozen once, deliberately. Recomputing it per move let each accepted add
+    # push a real starter onto the bench and make him droppable on the next
+    # pass: two tight ends in, and the engine offered up a starting running back.
+    protected_starters = {p["id"] for _, p in
+                          lineup.build_lineup(roster, roster_positions, _start_value)
+                          if p is not None}
+
+    while len(moves) < limit:
+        droppable = []
+        for p in roster:
+            if p["id"] in protected_starters or p["id"] in used_drops:
+                continue
+            if p["id"] in used_targets or p.get("protected"):
+                continue
+            replacement = (levels or {}).get(p["pos"], {}).get("pts", 0)
+            if (p.get("pts") or 0) >= replacement:
+                continue
+            droppable.append(p)
+        if not droppable:
+            break
+        drop = min(droppable, key=lambda p: p["dvs"])
+
+        # A stash still has to be a player. Sleeper projects nothing at all for
+        # someone who is on no depth chart, and no dynasty upside justifies
+        # spending a roster spot on a zero.
+        candidates = [t for t in pool
+                      if t["id"] not in used_targets
+                      and (t.get("pts") or 0) > 0
+                      and t["dvs"] > drop["dvs"] * DEPTH_MOVE_MARGIN]
+        if not candidates:
+            break
+        target = max(candidates, key=lambda t: t["dvs"])
+
+        roster = [p for p in roster if p["id"] != drop["id"]] + [target]
+        used_targets.add(target["id"])
+        used_drops.add(drop["id"])
+
+        why = [f"Kein Zugang verbessert aktuell deine Startelf. Kadertiefe: "
+               f"{target['name']} hat den deutlich höheren Dynasty-Wert "
+               f"({target['dvs']} statt {drop['dvs']})."]
+        why.extend(target.get("signals", [])[:2])
+
+        moves.append({
+            "kind": "depth",
+            "drop": drop,
+            "add": target,
+            "reason": " ".join(why),
+            "faab": target.get("faab"),
+            "balance": {
+                "pos_in": target["pos"],
+                "pos_out": drop["pos"],
+                "lineup_gain": 0.0,
+                "dvs_gain": round(target["dvs"] - drop["dvs"], 1),
+                "starts": False,
+                "empty_slots": [],
+            },
+        })
+    return moves
+
+
+def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None):
     """One enriched player record, keyed by the positions the league's slots use."""
     p_stats = stats.get(str(pid), {})
-    rvs = calculate_rvs(player, p_stats, sig)
-    dvs = calculate_dvs(player, p_stats, college_data, sig)
+    proj = (projs or {}).get(str(pid))
+    rvs = calculate_rvs(player, p_stats, sig, proj)
+    dvs = calculate_dvs(player, p_stats, college_data, sig, proj)
+    pts = expected_points(player, p_stats, sig, proj)
     entry = {
         "id": str(pid),
         "name": f"{player.get('first_name')} {player.get('last_name')}",
@@ -844,12 +1050,35 @@ def _player_entry(pid, player, stats, college_data, sig, levels, extra=None):
         "status": player.get("status", "Active"),
         "rvs": rvs,
         "dvs": dvs,
+        "pts": pts,
+        "proj": proj,
         "signals": sig["labels"] if sig else [],
         "injury": sig["injury"] if sig else None,
+        # Carried for every player, not just waiver targets: the same badges
+        # that explain an add explain a drop, and a roster view without them
+        # says nothing about why a player is where he is.
+        "trend": sig["trend"] if sig else None,
+        "opportunity": sig["opportunity"] if sig else None,
+        "news_days": sig["recency"]["news_days"] if sig else None,
     }
     if extra:
         entry.update(extra)
     return entry
+
+
+def _model_inputs(sport, scoring_settings):
+    """Everything the scoring model reads, loaded once per request.
+
+    All three analysis endpoints need exactly this bundle; keeping it in one
+    place is what stops the projection layer from being wired into two of them
+    and forgotten in the third.
+    """
+    players = load_players(sport)
+    college_data = load_college_stats()
+    stats = load_multi_year_stats(recent_seasons(sport), scoring_settings, players, sport)
+    signals_by_pid = signals.build_signals(players, sport)
+    projs = projected_points(sport, scoring_settings, players)
+    return players, college_data, stats, signals_by_pid, projs
 
 
 def analyze_waivers_api(username, league_id, sport="nfl"):
@@ -880,16 +1109,13 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     if waiver_budget:
         budget_left = waiver_budget - (my_roster.get("settings") or {}).get("waiver_budget_used", 0)
 
-    players = load_players(sport)
-    college_data = load_college_stats()
-    stats = load_multi_year_stats(recent_seasons(sport), scoring_settings, players, sport)
-    signals_by_pid = signals.build_signals(players, sport)
+    players, college_data, stats, signals_by_pid, projs = _model_inputs(sport, scoring_settings)
 
     rostered_ids = {str(pid) for r in rosters for pid in (r.get("players") or [])}
 
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
-                                signals_by_pid, req, num_teams, sport)
+                                signals_by_pid, req, num_teams, sport, projs=projs)
 
     # ---- My roster -------------------------------------------------------
     my_players_stats = []
@@ -898,16 +1124,16 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
         if not p:
             continue
         sig = signals_by_pid.get(str(pid))
-        entry = _player_entry(pid, p, stats, college_data, sig, levels)
-        entry["protected"] = drop_protection(p, entry["dvs"], entry["rvs"], sig, levels) if sig else None
-        entry["is_liability"] = (entry["rvs"] < levels.get(entry["pos"], {}).get("rvs", 0)
+        entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs)
+        entry["protected"] = drop_protection(p, entry["dvs"], entry["pts"], sig, levels) if sig else None
+        entry["is_liability"] = (entry["pts"] < levels.get(entry["pos"], {}).get("pts", 0)
                                  and not entry["protected"])
         my_players_stats.append(entry)
 
     needs = roster_needs(my_players_stats, roster_positions, levels)
     need_by_pos = {n["pos"]: n for n in needs}
 
-    my_players_stats.sort(key=lambda p: (p["protected"] is not None, p["rvs"]))
+    my_players_stats.sort(key=lambda p: (p["protected"] is not None, p["pts"]))
 
     # ---- Available players ----------------------------------------------
     # Anyone whose eligibility touches a slot this league actually starts.
@@ -931,13 +1157,13 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
         if sig["injury"]["severity"] >= 4 and intensity < 0.05:
             continue
 
-        entry = _player_entry(pid, p, stats, college_data, sig, levels)
+        entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs)
         pos = entry["pos"]
         severity = need_by_pos.get(pos, {}).get("severity", 0)
-        entry["is_upgrade"] = entry["rvs"] >= levels.get(pos, {}).get("rvs", 0)
-        entry["opportunity"] = sig["opportunity"]
-        entry["trend"] = sig["trend"]
-        entry["score"] = waiver_score(entry["dvs"], entry["rvs"], sig, severity)
+        replacement_pts = levels.get(pos, {}).get("pts", 0)
+        entry["is_upgrade"] = entry["pts"] >= replacement_pts
+        entry["score"] = waiver_score(entry["dvs"], entry["pts"], sig, severity,
+                                      replacement_pts)
         entry["faab"] = faab_recommendation(sig, severity, budget_left, entry["is_upgrade"])
         available.append(entry)
 
@@ -991,6 +1217,68 @@ def _strip_one(player):
     return out
 
 
+def current_lineup(my_roster, roster_positions, squad):
+    """The lineup as it actually stands in Sleeper right now.
+
+    `starters` is positional: it lines up index for index with the non-bench
+    entries of `roster_positions`, and an unfilled slot is the string "0".
+    Without this the optimizer could only ever show its own answer, never the
+    thing the answer is supposed to be compared against.
+    """
+    slots = lineup.starting_slots(roster_positions)
+    starters = (my_roster or {}).get("starters") or []
+    by_id = {p["id"]: p for p in squad}
+
+    out = []
+    for i, slot in enumerate(slots):
+        pid = str(starters[i]) if i < len(starters) else "0"
+        out.append({"slot": slot, "player": by_id.get(pid)})
+    return out
+
+
+def lineup_changes(current, optimal):
+    """Who should be starting who is not, and who should sit for them.
+
+    Compared per player rather than per slot. Two players swapping between two
+    identical DL slots changes nothing a manager needs to do, but slot-wise
+    comparison reports it twice - once in each direction, with equal and
+    opposite "gains" - and that noise buried the two or three moves that
+    actually matter.
+
+    The best available addition is paired against the weakest player it
+    displaces, which is the form the instruction is acted on in: start Y
+    instead of X. No per-pair gain is reported: the pairing crosses positions,
+    so the difference between an incoming linebacker and an outgoing receiver
+    is not a number that means anything. The gain lives on the report as a
+    whole, where it reconciles exactly.
+    """
+    now_ids = {s["player"]["id"] for s in current if s.get("player")}
+    best_ids = {s["player"]["id"] for s in optimal if s.get("player")}
+
+    slot_of = {}
+    for s in optimal:
+        player = s.get("player")
+        if player:
+            slot_of[player["id"]] = s["slot"]
+
+    sit = sorted((s["player"] for s in current
+                  if s.get("player") and s["player"]["id"] not in best_ids),
+                 key=_start_value)
+    start = sorted((s["player"] for s in optimal
+                    if s.get("player") and s["player"]["id"] not in now_ids),
+                   key=_start_value, reverse=True)
+
+    changes = []
+    for i, player in enumerate(start):
+        out = sit[i] if i < len(sit) else None
+        changes.append({
+            "slot": slot_of.get(player["id"]),
+            "in": _strip_one(player),
+            "out": _strip_one(out),
+        })
+    return changes
+
+
 def _strip(players):
     return [_strip_one(p) for p in players]
 
@@ -1019,14 +1307,11 @@ def optimize_lineup_api(username, league_id, sport="nfl"):
     if not my_player_ids:
         return {"error": "Dein Roster in dieser Liga ist leer."}
 
-    players = load_players(sport)
-    college_data = load_college_stats()
-    stats = load_multi_year_stats(recent_seasons(sport), scoring_settings, players, sport)
-    signals_by_pid = signals.build_signals(players, sport)
+    players, college_data, stats, signals_by_pid, projs = _model_inputs(sport, scoring_settings)
 
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
-                                signals_by_pid, req, num_teams, sport)
+                                signals_by_pid, req, num_teams, sport, projs=projs)
 
     squad = []
     for pid in my_player_ids:
@@ -1034,7 +1319,7 @@ def optimize_lineup_api(username, league_id, sport="nfl"):
         if not p:
             continue
         squad.append(_player_entry(pid, p, stats, college_data,
-                                   signals_by_pid.get(str(pid)), levels))
+                                   signals_by_pid.get(str(pid)), levels, projs=projs))
 
     report = lineup.lineup_report(squad, roster_positions, _start_value)
     starters = {s["player"]["id"] for s in report["slots"] if s["player"]}
@@ -1067,9 +1352,19 @@ def optimize_lineup_api(username, league_id, sport="nfl"):
                 "injury": player["injury"],
             })
 
+    current = current_lineup(my_roster, roster_positions, squad)
+    changes = lineup_changes(current, report["slots"])
+    current_total = round(
+        sum(_start_value(s["player"]) for s in current if s["player"]), 1)
+
     return {
         "league": {"name": league_info.get("name"), "teams": num_teams},
         "slots": slots,
+        "current": [{"slot": s["slot"], "player": _strip_one(s["player"])}
+                    for s in current],
+        "current_total": current_total,
+        "gain": round(report["total"] - current_total, 1),
+        "changes": changes,
         "bench": _strip(report["bench"]),
         "total": report["total"],
         "empty": report["empty"],
@@ -1109,6 +1404,16 @@ def update_sleeper_data_api(sport="nfl", college_batch=25):
             updated.append(f"Stats {year}")
         else:
             errors.append(f"Stats {year}")
+
+    # Projections carry the entire forward-looking half of the model, and they
+    # move as depth charts and injuries move — so they are refreshed on the same
+    # daily cadence as the rest, not fetched once and left to rot.
+    season_projections = projections.fetch_season_projections(sport, str(current_year))
+    if season_projections:
+        _write_data(projections_file(sport, str(current_year)), season_projections)
+        updated.append(f"{len(season_projections)} Projections")
+    else:
+        errors.append("Projections")
 
     # College profiles are only relevant for the NFL rookie model, and each one
     # costs an ESPN round trip - so they are topped up in batches.
@@ -1231,14 +1536,11 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
             for pid in (r.get("players") or []):
                 rostered_ids.add(str(pid))
 
-    players = load_players(sport)
-    college_data = load_college_stats()
-    stats = load_multi_year_stats(recent_seasons(sport), scoring_settings, players, sport)
-    signals_by_pid = signals.build_signals(players, sport)
+    players, college_data, stats, signals_by_pid, projs = _model_inputs(sport, scoring_settings)
 
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
-                                signals_by_pid, req, num_teams, sport)
+                                signals_by_pid, req, num_teams, sport, projs=projs)
 
     # During a startup draft Sleeper leaves the rosters empty until it finishes,
     # so the picks made so far are the only picture of the team. Combine both:
@@ -1258,7 +1560,7 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
             if not p:
                 continue
             my_squad.append(_player_entry(pid, p, stats, college_data,
-                                          signals_by_pid.get(str(pid)), levels))
+                                          signals_by_pid.get(str(pid)), levels, projs=projs))
         needs = roster_needs(my_squad, roster_positions, levels)
 
     is_superflex = roster_positions.count('SUPER_FLEX') > 0
@@ -1290,8 +1592,10 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
 
         p_stats = stats.get(str(pid), {})
         sig = signals_by_pid.get(str(pid))
-        rvs = calculate_rvs(p, p_stats, sig)
-        dvs = calculate_dvs(p, p_stats, college_data, sig)
+        proj = projs.get(str(pid))
+        rvs = calculate_rvs(p, p_stats, sig, proj)
+        dvs = calculate_dvs(p, p_stats, college_data, sig, proj)
+        pts = expected_points(p, p_stats, sig, proj)
         pos = canonical_pos(p)
 
         trade_value = dvs
@@ -1316,6 +1620,8 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
             "status": p.get("status") or "Active",
             "rvs": rvs,
             "dvs": dvs,
+            "pts": pts,
+            "proj": proj,
             "trade_value": round(trade_value, 1),
             "is_rookie": years_exp == 0,
             "signals": sig["labels"] if sig else [],

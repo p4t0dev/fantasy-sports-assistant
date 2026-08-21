@@ -16,6 +16,7 @@ type DraftPlayer = {
   status?: string;
   rvs: number;
   dvs: number;
+  pts: number;
   trade_value: number;
   is_rookie: boolean;
   signals?: string[];
@@ -320,6 +321,9 @@ function DraftAssistantContent() {
                     <th scope="col" className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
                       Status
                     </th>
+                    <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-blue-300 uppercase tracking-wider" title="Saisonprognose in der Wertung dieser Liga">
+                      Proj
+                    </th>
                     <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-blue-400 uppercase tracking-wider" title="Dynasty Value Score">
                       DVS
                     </th>
@@ -373,6 +377,9 @@ function DraftAssistantContent() {
                           >
                             {player.injury?.status || player.status || "Active"}
                           </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-blue-300">
+                          {player.pts}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-white">
                           {player.dvs}

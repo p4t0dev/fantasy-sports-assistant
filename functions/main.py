@@ -89,11 +89,36 @@ def get_user_leagues(req: https_fn.Request) -> https_fn.Response:
                 if l.get("league_id") not in seen_ids:
                     seen_ids.add(l.get("league_id"))
                     all_leagues.append(l)
-        leagues = all_leagues
+        leagues = _drop_superseded(all_leagues)
     else:
         leagues = sleeper_api.get_leagues(user.get("user_id"), sport, season) or []
 
+    current = _current_season(sport)
+    for l in leagues:
+        # A league from a finished season is history, not a place to set a
+        # lineup. Flagged rather than removed so the archive stays reachable.
+        l["archived"] = (str(l.get("season")) != current
+                         or l.get("status") == "complete")
+    leagues.sort(key=lambda l: (l.get("archived", False),
+                                -int(l.get("season") or 0),
+                                l.get("name") or ""))
+
     return _json(leagues, 200, req)
+
+
+def _drop_superseded(leagues):
+    """Remove the earlier incarnations of a dynasty league.
+
+    A dynasty league is a fresh league_id every season, chained backwards
+    through `previous_league_id`. Merging three seasons of listings therefore
+    returned the same league three times over - and every league the user had
+    since left came back too, because it was still there in an old season. Any
+    league that another league in the list points back to is a past season of
+    that league and is dropped.
+    """
+    superseded = {l.get("previous_league_id") for l in leagues
+                  if l.get("previous_league_id")}
+    return [l for l in leagues if l.get("league_id") not in superseded]
 
 
 @https_fn.on_request(memory=512)
