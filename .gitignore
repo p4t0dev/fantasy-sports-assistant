@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Node
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Firebase
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
+*.local
+
+# Sleeper data snapshots. These are refreshed at runtime (update_data /
+# scheduled job) and are far too large to keep in git - players.json alone is
+# 16 MB and existed twice in this repo.
+players.json
+players_*.json
+stats_*.json
+college_stats.json
+
+# Packaged skill archives
+*.zip
+
+.DS_Store
