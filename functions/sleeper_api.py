@@ -25,6 +25,10 @@ def get_leagues(user_id, sport, season):
     url = f"{BASE_URL}/user/{user_id}/leagues/{sport}/{season}"
     return _make_request(url)
 
+def get_league(league_id):
+    url = f"{BASE_URL}/league/{league_id}"
+    return _make_request(url)
+
 def get_rosters(league_id):
     url = f"{BASE_URL}/league/{league_id}/rosters"
     return _make_request(url)
@@ -43,6 +47,10 @@ def get_draft(draft_id):
 
 def get_draft_picks(draft_id):
     url = f"{BASE_URL}/draft/{draft_id}/picks"
+    return _make_request(url)
+
+def get_stats(sport, year, season_type="regular"):
+    url = f"{BASE_URL}/stats/{sport}/{season_type}/{year}"
     return _make_request(url)
 
 def get_trending_players(sport, type="add", lookback_hours=24, limit=25):

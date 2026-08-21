@@ -2,12 +2,29 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { apiGet } from "@/lib/api";
+
+type League = {
+  league_id: string;
+  name: string;
+  season: string;
+  status: string;
+  total_rosters: number;
+};
+
+type Draft = { draft_id: string; name: string; status: string; league_id: string | null };
+
+const SPORTS = [
+  { id: "nfl", label: "NFL" },
+  { id: "nba", label: "NBA" },
+];
 
 export default function Dashboard() {
   const [username, setUsername] = useState("p4t0b4ll3rs");
   const [season, setSeason] = useState("all");
-  const [leagues, setLeagues] = useState<any[]>([]);
-  const [drafts, setDrafts] = useState<any[]>([]);
+  const [sport, setSport] = useState("nfl");
+  const [leagues, setLeagues] = useState<League[]>([]);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [manualId, setManualId] = useState("");
@@ -19,16 +36,13 @@ export default function Dashboard() {
     setManualLoading(true);
     setError("");
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5001/demo-no-project/us-central1";
-      const res = await fetch(`${url}/get_single_league?league_id=${manualId.trim()}`);
-      if (!res.ok) throw new Error("Liga mit dieser ID konnte nicht gefunden werden.");
-      const data = await res.json();
-      if (data && data.league_id) {
-        setLeagues(prev => [data, ...prev.filter(l => l.league_id !== data.league_id)]);
+      const data = await apiGet<League>("get_single_league", { league_id: manualId.trim() });
+      if (data?.league_id) {
+        setLeagues((prev) => [data, ...prev.filter((l) => l.league_id !== data.league_id)]);
         setManualId("");
       }
-    } catch (err: any) {
-      setError(err.message || "Fehler beim Laden der Liga ID");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Fehler beim Laden der Liga ID");
     } finally {
       setManualLoading(false);
     }
@@ -37,30 +51,26 @@ export default function Dashboard() {
   const fetchLeagues = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!username) return;
-    
+
     setLoading(true);
     setError("");
-    
+
     try {
-      // Assuming Firebase functions are hosted locally or on the same domain in prod
-      const url = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5001/demo-no-project/us-central1";
-      const leaguesRes = await fetch(`${url}/get_user_leagues?username=${username}&season=${season}`);
-      const draftsRes = await fetch(`${url}/get_user_drafts?username=${username}&season=${season}`);
-      
-      if (!leaguesRes.ok || !draftsRes.ok) {
-        throw new Error("Failed to fetch data. Check username.");
-      }
-      
-      const leaguesData = await leaguesRes.json();
-      const draftsData = await draftsRes.json();
-      setLeagues(leaguesData);
-      setDrafts(draftsData);
-    } catch (err: any) {
-      setError(err.message || "An error occurred");
+      const [leaguesData, draftsData] = await Promise.all([
+        apiGet<League[]>("get_user_leagues", { username, season, sport }),
+        apiGet<Draft[]>("get_user_drafts", { username, season, sport }),
+      ]);
+      setLeagues(Array.isArray(leaguesData) ? leaguesData : []);
+      setDrafts(Array.isArray(draftsData) ? draftsData : []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ein Fehler ist aufgetreten");
     } finally {
       setLoading(false);
     }
   };
+
+  const linkParams = (extra: Record<string, string>) =>
+    new URLSearchParams({ username, sport, ...extra }).toString();
 
   return (
     <div className="space-y-8">
@@ -69,7 +79,8 @@ export default function Dashboard() {
           Dominate Your <span className="text-blue-500">Dynasty</span>
         </h1>
         <p className="max-w-2xl mx-auto text-xl text-gray-400">
-          Advanced analytics, waiver wire recommendations, and draft analysis powered by AI and multi-year data models.
+          Waiver-Empfehlungen mit Live-Spielernews, Verletzungsstatus und FAAB-Geboten — plus
+          Draft-Analyse auf Basis mehrjähriger Daten.
         </p>
       </div>
 
@@ -94,20 +105,43 @@ export default function Dashboard() {
                 onChange={(e) => setSeason(e.target.value)}
                 className="px-3 py-2 rounded-md bg-gray-900 border border-gray-700 text-white text-sm focus:ring-blue-500 focus:border-blue-500 cursor-pointer"
               >
-                <option value="all">Alle Saisons (2024-2026)</option>
-                <option value="2026">2026 Season</option>
-                <option value="2025">2025 Season</option>
-                <option value="2024">2024 Season</option>
+                <option value="all">Alle Saisons</option>
+                <option value="2026">2026</option>
+                <option value="2025">2025</option>
+                <option value="2024">2024</option>
               </select>
               <button
                 type="submit"
                 disabled={loading || !username}
                 className="inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 btn"
               >
-                {loading ? "Loading..." : "Load Leagues"}
+                {loading ? "Lädt…" : "Ligen laden"}
               </button>
             </div>
           </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-400">Sportart:</span>
+            <div className="bg-gray-900 rounded-lg p-1 flex border border-gray-800">
+              {SPORTS.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => {
+                    setSport(s.id);
+                    setLeagues([]);
+                    setDrafts([]);
+                  }}
+                  className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    sport === s.id ? "bg-blue-600 text-white shadow" : "text-gray-400 hover:text-white"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
         </form>
 
@@ -125,44 +159,67 @@ export default function Dashboard() {
               disabled={manualLoading || !manualId.trim()}
               className="px-3 py-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium border border-gray-700 disabled:opacity-50"
             >
-              {manualLoading ? "Lade..." : "+ Liga ID hinzufügen"}
+              {manualLoading ? "Lade…" : "+ Liga ID hinzufügen"}
             </button>
           </form>
         </div>
       </div>
 
-      {leagues.length > 0 && (
+      {!loading && leagues.length === 0 && drafts.length === 0 && (
+        <p className="text-center text-gray-500 text-sm">
+          Noch keine Ligen geladen. Username eingeben, Sportart wählen und „Ligen laden“ drücken.
+        </p>
+      )}
+
+      {(leagues.length > 0 || drafts.length > 0) && (
         <div className="space-y-6">
-          <h2 className="text-2xl font-bold text-white">Your Leagues & Drafts</h2>
+          <h2 className="text-2xl font-bold text-white">
+            Deine Ligen &amp; Drafts <span className="text-gray-500 text-lg">({sport.toUpperCase()})</span>
+          </h2>
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {leagues.map((league) => {
-              const leagueDrafts = drafts.filter(d => d.league_id === league.league_id);
-              
+              const leagueDrafts = drafts.filter((d) => d.league_id === league.league_id);
+
               return (
-                <div key={league.league_id} className="glass-panel overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] flex flex-col h-full">
+                <div
+                  key={league.league_id}
+                  className="glass-panel overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] flex flex-col h-full"
+                >
                   <div className="px-6 py-5 flex-1">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <h3 className="text-lg leading-6 font-medium text-white truncate" title={league.name}>
                         {league.name}
                       </h3>
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-900/50 text-blue-300 border border-blue-800">
+                      <span className="shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-900/50 text-blue-300 border border-blue-800">
                         {league.total_rosters} Teams
                       </span>
                     </div>
                     <div className="mt-4 flex items-center justify-between text-sm text-gray-400">
-                      <p>Season: {league.season}</p>
-                      <p>Status: <span className="capitalize">{league.status}</span></p>
+                      <p>Saison: {league.season}</p>
+                      <p>
+                        Status: <span className="capitalize">{league.status}</span>
+                      </p>
                     </div>
                   </div>
                   <div className="bg-gray-900/50 px-6 py-3 border-t border-gray-800 flex flex-wrap gap-4 justify-between items-center">
-                    <Link href={`/waivers?league_id=${league.league_id}&username=${username}`} className="text-blue-400 hover:text-blue-300 text-sm font-medium">
+                    <Link
+                      href={`/waivers?${linkParams({ league_id: league.league_id })}`}
+                      className="text-blue-400 hover:text-blue-300 text-sm font-medium"
+                    >
                       Waiver Wire →
                     </Link>
-                    <Link href={`/lineup?league_id=${league.league_id}&username=${username}`} className="text-blue-400 hover:text-blue-300 text-sm font-medium">
+                    <Link
+                      href={`/lineup?${linkParams({ league_id: league.league_id })}`}
+                      className="text-blue-400 hover:text-blue-300 text-sm font-medium"
+                    >
                       Lineup Optimizer →
                     </Link>
-                    {leagueDrafts.map(d => (
-                      <Link key={d.draft_id} href={`/draft?draft_id=${d.draft_id}&username=${username}`} className="text-green-400 hover:text-green-300 text-sm font-medium w-full text-center mt-2 pt-2 border-t border-gray-800">
+                    {leagueDrafts.map((d) => (
+                      <Link
+                        key={d.draft_id}
+                        href={`/draft?${linkParams({ draft_id: d.draft_id })}`}
+                        className="text-green-400 hover:text-green-300 text-sm font-medium w-full text-center mt-2 pt-2 border-t border-gray-800"
+                      >
                         Draft Assistant ({d.status}) →
                       </Link>
                     ))}
@@ -170,30 +227,40 @@ export default function Dashboard() {
                 </div>
               );
             })}
-            
-            {/* Show standalone drafts (e.g. mock drafts) that don't belong to any league in the list */}
-            {drafts.filter(d => !leagues.some(l => l.league_id === d.league_id)).map((draft) => (
-              <div key={draft.draft_id} className="glass-panel overflow-hidden transition-all border-green-500/30 hover:border-green-500/60 hover:shadow-[0_0_15px_rgba(34,197,94,0.2)] flex flex-col h-full">
-                <div className="px-6 py-5 flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg leading-6 font-medium text-white truncate" title={draft.name}>
-                      {draft.name}
-                    </h3>
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-900/50 text-green-300 border border-green-800">
-                      Mock Draft
-                    </span>
+
+            {/* Drafts that belong to no league in the current list (e.g. mock drafts) */}
+            {drafts
+              .filter((d) => !leagues.some((l) => l.league_id === d.league_id))
+              .map((draft) => (
+                <div
+                  key={draft.draft_id}
+                  className="glass-panel overflow-hidden transition-all border-green-500/30 hover:border-green-500/60 hover:shadow-[0_0_15px_rgba(34,197,94,0.2)] flex flex-col h-full"
+                >
+                  <div className="px-6 py-5 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-lg leading-6 font-medium text-white truncate" title={draft.name}>
+                        {draft.name}
+                      </h3>
+                      <span className="shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-900/50 text-green-300 border border-green-800">
+                        Mock Draft
+                      </span>
+                    </div>
+                    <div className="mt-4 flex items-center justify-between text-sm text-gray-400">
+                      <p>
+                        Status: <span className="capitalize">{draft.status}</span>
+                      </p>
+                    </div>
                   </div>
-                  <div className="mt-4 flex items-center justify-between text-sm text-gray-400">
-                    <p>Status: <span className="capitalize">{draft.status}</span></p>
+                  <div className="bg-gray-900/50 px-6 py-3 border-t border-gray-800 flex justify-end">
+                    <Link
+                      href={`/draft?${linkParams({ draft_id: draft.draft_id })}`}
+                      className="text-green-400 hover:text-green-300 text-sm font-medium w-full text-center"
+                    >
+                      Draft Assistant öffnen →
+                    </Link>
                   </div>
                 </div>
-                <div className="bg-gray-900/50 px-6 py-3 border-t border-gray-800 flex justify-end">
-                  <Link href={`/draft?draft_id=${draft.draft_id}&username=${username}`} className="text-green-400 hover:text-green-300 text-sm font-medium w-full text-center">
-                    Enter Draft Assistant →
-                  </Link>
-                </div>
-              </div>
-            ))}
+              ))}
           </div>
         </div>
       )}
