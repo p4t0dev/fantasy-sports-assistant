@@ -196,6 +196,25 @@ def get_user_drafts(req: https_fn.Request) -> https_fn.Response:
 
 
 @https_fn.on_request(memory=512)
+def optimize_lineup(req: https_fn.Request) -> https_fn.Response:
+    if req.method == 'OPTIONS':
+        return _preflight(req)
+
+    username = req.args.get("username")
+    league_id = req.args.get("league_id")
+    sport = req.args.get("sport", "nfl")
+
+    if not username or not league_id:
+        return _error("Missing username or league_id", 400, req)
+
+    result = api_core.optimize_lineup_api(username, league_id, sport)
+    if "error" in result:
+        return _error(result["error"], 400, req)
+
+    return _json(result, 200, req)
+
+
+@https_fn.on_request(memory=512)
 def analyze_draft(req: https_fn.Request) -> https_fn.Response:
     if req.method == 'OPTIONS':
         return _preflight(req)

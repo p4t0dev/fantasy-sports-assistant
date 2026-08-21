@@ -6,6 +6,7 @@ import urllib.request
 import urllib.parse
 import sleeper_api
 import signals
+import lineup
 
 def fetch_espn_college_stats(player_name):
     """
@@ -328,8 +329,11 @@ def load_multi_year_stats(years=[2023, 2024, 2025], scoring_settings=None, playe
         if idx >= len(RECENCY_WEIGHTS):
             break
         stats = load_json(stats_file(sport, year))
-        if not stats:
-            continue  # season not played yet, or file missing - do not burn a weight slot
+        # Sleeper ships a stats file for the current season during preseason, full
+        # of zero-game entries. It is not empty, but it carries no signal - so
+        # check for actual games played before it consumes a recency weight.
+        if not any((s.get("gp") or 0) > 0 for s in stats.values()):
+            continue
         weight = RECENCY_WEIGHTS[idx]
         idx += 1
         for pid, p_stats in stats.items():
@@ -526,7 +530,18 @@ def calculate_dvs(player, p_stats, college_data, signal=None):
     return round(dvs, 1)
 
 
-DIRECT_SLOTS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'DL', 'LB', 'DB', 'CB', 'S', 'DE', 'DT',
+def canonical_pos(player):
+    """The position a league's roster slots address him by.
+
+    Sleeper's `position` is the real-life one (CB, SS, DE, NT); the slots use
+    `fantasy_positions` (DB, DL, LB). Displaying and grouping by the raw value
+    is why cornerbacks never matched DB slots.
+    """
+    fantasy = player.get("fantasy_positions") or []
+    return fantasy[0] if fantasy else (player.get("position") or "UNK")
+
+
+DIRECT_SLOTS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'DL', 'LB', 'DB',
                 'PG', 'SG', 'SF', 'PF', 'C']
 
 # How the demand of a flex slot spreads over the positions allowed to fill it.
@@ -545,9 +560,8 @@ FLEX_WEIGHTS = {
 def starter_requirements(roster_positions):
     """Effective starter demand per position, flex slots included.
 
-    The old code counted only literal position slots, so QB/RB/RB/WR/WR/TE plus
-    FLEX/FLEX/SUPER_FLEX read as 6 starters instead of 9, and IDP_FLEX heavy
-    leagues were off by a dozen slots.
+    Used only to size replacement levels; the lineup itself is built by real
+    slot matching in lineup.py.
     """
     req = {}
     for slot in roster_positions or []:
@@ -559,80 +573,82 @@ def starter_requirements(roster_positions):
     return req
 
 
-def replacement_levels(rosters, players, stats, college_data, sigs, req, num_teams):
-    """League-relative baseline: the value of the last player at a position who
-    would still be starting somewhere in this league. Replaces the hardcoded
-    thresholds (dvs < 30 / dvs < 80) that never matched the actual scale."""
+def replacement_levels(rosters, players, stats, college_data, sigs, req, num_teams,
+                       sport="nfl", fallback_pool=True):
+    """League-relative baseline per position: the value of the last player who
+    would still be starting somewhere in this league.
+
+    Players are counted at every position they are eligible for, and the RVS and
+    DVS baselines are ranked independently - reading an RVS off a DVS-sorted list
+    produced an arbitrary number.
+    """
     by_pos = {}
     for roster in rosters or []:
         for pid in (roster.get("players") or []):
             player = players.get(str(pid))
             if not player:
                 continue
-            pos = player.get("position")
-            if not pos:
-                continue
             p_stats = stats.get(str(pid), {})
             sig = sigs.get(str(pid))
-            by_pos.setdefault(pos, []).append((
-                calculate_dvs(player, p_stats, college_data, sig),
-                calculate_rvs(player, p_stats, sig),
-            ))
+            entry = (calculate_dvs(player, p_stats, college_data, sig),
+                     calculate_rvs(player, p_stats, sig))
+            for pos in lineup.player_positions(player):
+                by_pos.setdefault(pos, []).append(entry)
+
+    # During a live startup draft Sleeper leaves the rosters empty, so there is
+    # nothing to rank and every baseline would come out as zero - which silently
+    # disables need detection. Fall back to the player pool: "the Nth best player
+    # still obtainable at this position" is the same idea, and is arguably the
+    # better reference mid-draft.
+    if fallback_pool:
+        needed = {pos: max(1, int(round(req.get(pos, 1) * max(1, num_teams))))
+                  for pos in req}
+        thin = [pos for pos, n in needed.items() if len(by_pos.get(pos, [])) < n]
+        if thin:
+            thin_set = set(thin)
+            for pid, player in players.items():
+                if not is_rosterable(player, sport):
+                    continue
+                positions = lineup.player_positions(player) & thin_set
+                if not positions:
+                    continue
+                p_stats = stats.get(str(pid), {})
+                sig = sigs.get(str(pid))
+                entry = (calculate_dvs(player, p_stats, college_data, sig),
+                         calculate_rvs(player, p_stats, sig))
+                for pos in positions:
+                    by_pos.setdefault(pos, []).append(entry)
 
     levels = {}
     for pos, values in by_pos.items():
-        values.sort(key=lambda v: -v[0])
         starters = max(1, int(round(req.get(pos, 1) * max(1, num_teams))))
         idx = min(len(values) - 1, starters - 1)
-        levels[pos] = {"dvs": values[idx][0], "rvs": values[idx][1]}
+        dvs_sorted = sorted(values, key=lambda v: -v[0])
+        rvs_sorted = sorted(values, key=lambda v: -v[1])
+        levels[pos] = {"dvs": dvs_sorted[idx][0], "rvs": rvs_sorted[idx][1]}
     return levels
 
 
-def _slots_word(n, dative=False):
-    if n == 1:
-        return "Startplatz"
-    return "Startplätzen" if dative else "Startplätze"
+def replacement_rvs(levels):
+    return {pos: lv["rvs"] for pos, lv in levels.items()}
 
 
-def is_startable(player, levels):
-    return player["dvs"] >= levels.get(player["pos"], {}).get("dvs", 0)
+def roster_needs(my_players, roster_positions, levels):
+    """Needs come from the lineup and from real positional depth, not from a
+    headcount of primary positions."""
+    return lineup.positional_needs(
+        my_players, roster_positions, replacement_rvs(levels), _start_value,
+        starter_requirements(roster_positions))
 
 
-def startable_counts(my_players, levels):
-    counts = {}
-    for p in my_players:
-        if is_startable(p, levels):
-            counts[p["pos"]] = counts.get(p["pos"], 0) + 1
-    return counts
+def _start_value(player):
+    """What a player is worth to *this week's* lineup.
 
-
-def roster_needs(my_players, req, levels):
-    """Counts startable depth (players above replacement level), not raw bodies.
-
-    The old version compared the whole roster against starter slots, so a normal
-    25-man roster could never register a need.
+    Startability is a redraft question. Measuring it with DVS is why four
+    productive RBs read as "0 startable RB": the dynasty age curve had flattened
+    them, though it says nothing about whether you can start them on Sunday.
     """
-    return needs_from_counts(startable_counts(my_players, levels), req)
-
-
-def needs_from_counts(startable, req):
-    needs = []
-    for pos, demand in req.items():
-        if demand < 0.5 or pos in ("K", "DEF"):
-            continue
-        slots = int(round(demand))
-        have = startable.get(pos, 0)
-        if have < slots:
-            needs.append({"pos": pos, "severity": 3,
-                          "reason": f"Startplatz ungedeckt: nur {have} startbare {pos} bei {slots} {_slots_word(slots, dative=True)}."})
-        elif have == slots:
-            needs.append({"pos": pos, "severity": 2,
-                          "reason": f"Keine Absicherung: genau {have} startbare {pos} für {slots} {_slots_word(slots)}."})
-        elif have == slots + 1:
-            needs.append({"pos": pos, "severity": 1,
-                          "reason": f"Dünne Bank: nur 1 startbarer Backup auf {pos}."})
-    needs.sort(key=lambda n: -n["severity"])
-    return needs
+    return player.get("rvs", 0) or 0
 
 
 def waiver_score(dvs, rvs, sig, need_severity):
@@ -704,174 +720,136 @@ def drop_protection(player, dvs, rvs, sig, levels):
 
 # One position should not soak up the whole waiver budget, not even through
 # balance-neutral upgrades.
-MAX_ADDS_PER_POS = 2
+def _lineup_value(players, roster_positions):
+    return lineup.lineup_value(
+        lineup.build_lineup(players, roster_positions, _start_value), _start_value)
 
 
-def plan_moves(my_players, available, req, levels, max_moves=5):
-    """Plans a *sequence* of add/drop moves, not a list of independent ideas.
+def plan_moves(my_players, available, roster_positions, levels, needs=None,
+               max_moves=5, target_pool=40):
+    """Plans a sequence of add/drop moves by simulating the actual lineup.
 
-    Every accepted move updates the simulated roster before the next one is
-    chosen. Without that the engine served one DB need three times over and paid
-    for it by dropping three LBs, ending with a surplus at one position and empty
-    starting slots at another.
+    A move is only worth making if the resulting starting lineup is better than
+    the current one. That single rule replaces the old per-position counters and
+    caps: once a position is covered, another player there adds nothing, so the
+    engine stops on its own instead of recommending three DBs for one DB slot
+    and paying for them by gutting LB.
 
-    Two further rules follow from the same idea:
-      - Targets are chosen by *current* need severity, so a critical RB/QB gap
-        outranks a well-scored DB whose need is already covered.
-      - A drop is refused if it would leave that position below its starter slots.
+    Cost is kept down by scoring each add and each drop against the lineup once
+    per round (O(n+m) matchings) and only verifying the best pairing exactly.
     """
-    def vor(player):
-        # Value over replacement: the only way to compare a DB with a WR.
-        return round(player["dvs"] - levels.get(player["pos"], {}).get("dvs", 0), 1)
-
-    counts = startable_counts(my_players, levels)
-    droppable = sorted((p for p in my_players if not p["protected"]), key=vor)
-    by_value = sorted(available, key=lambda t: -vor(t))
-
+    roster = list(my_players)
     used_targets, used_drops = set(), set()
-    adds_per_pos = {}
     moves = []
+    # Positions with an uncovered starting slot: never pay for an add by
+    # thinning one of these, unless the add lands at the same position.
+    critical = {n["pos"] for n in (needs or []) if n["severity"] >= 3}
+
+    # Best few per position is plenty; scanning every waiver player would cost
+    # a matching each without changing the answer.
+    pool = []
+    per_pos = {}
+    for t in available:
+        key = t["pos"]
+        if per_pos.get(key, 0) >= 6:
+            continue
+        per_pos[key] = per_pos.get(key, 0) + 1
+        pool.append(t)
+        if len(pool) >= target_pool:
+            break
 
     while len(moves) < max_moves:
-        needs = needs_from_counts(counts, req)
+        base = _lineup_value(roster, roster_positions)
 
-        target, need = None, None
-        for candidate_need in needs:
-            # Severity 1 means "one startable backup" - that is depth, not a hole.
-            # Spending a roster move on it is how DB went from 2 to 5 while RB and
-            # QB sat at zero.
-            if candidate_need["severity"] < 2:
+        gains = []
+        for t in pool:
+            if t["id"] in used_targets:
                 continue
-            if adds_per_pos.get(candidate_need["pos"], 0) >= MAX_ADDS_PER_POS:
+            gain = _lineup_value(roster + [t], roster_positions) - base
+            if gain > 0:
+                gains.append((gain, t))
+        if not gains:
+            break
+        gains.sort(key=lambda g: -g[0])
+
+        losses = []
+        for d in roster:
+            if d["id"] in used_drops or d.get("protected"):
                 continue
-            for t in by_value:
-                # Deliberately no "must beat league replacement" test here: in a
-                # deep league nothing on waivers ever does, and the real question
-                # is whether he beats the player we would drop - which _pick_drop
-                # enforces.
-                if t["id"] in used_targets:
-                    continue
-                if t["pos"] == candidate_need["pos"]:
-                    target, need = t, candidate_need
-                    break
-            if target:
-                break
+            remaining = [p for p in roster if p["id"] != d["id"]]
+            losses.append((base - _lineup_value(remaining, roster_positions), d))
+        if not losses:
+            break
+        losses.sort(key=lambda l: l[0])
 
-        # No open need left that we can actually fill: offer a same-position
-        # upgrade instead. Swapping like for like keeps the balance intact -
-        # but only if the drop really is the player we compared against.
-        forced_drop = None
-        if not target:
-            for t in by_value:
-                if t["id"] in used_targets:
-                    continue
-                if adds_per_pos.get(t["pos"], 0) >= MAX_ADDS_PER_POS:
-                    continue
-                weakest = next((d for d in droppable
-                                if d["pos"] == t["pos"] and d["id"] not in used_drops), None)
-                if weakest and vor(t) > vor(weakest) + 5:
-                    target, need, forced_drop = t, None, weakest
-                    break
+        # Ignore rounding-level improvements; a waiver claim costs FAAB and a
+        # roster spot, so a one-point lineup gain is not worth recommending.
+        min_gain = max(3.0, 0.004 * base)
 
-        if not target:
+        best = None
+        for gain, target in gains[:8]:
+            for loss, drop in losses[:8]:
+                if gain - loss <= min_gain:
+                    continue
+                if drop["pos"] in critical and drop["pos"] != target["pos"]:
+                    continue
+                candidate = [p for p in roster if p["id"] != drop["id"]] + [target]
+                delta = _lineup_value(candidate, roster_positions) - base
+                if delta > min_gain and (best is None or delta > best[0]):
+                    best = (delta, target, drop)
+        if not best:
             break
 
-        # A same-position upgrade is neutral by construction: +1 and -1 at the
-        # same position. Any other drop would turn it into a positional swap.
-        if forced_drop is not None:
-            drop, drop_was_startable = forced_drop, is_startable(forced_drop, levels)
-        else:
-            drop, drop_was_startable = _pick_drop(
-                droppable, used_drops, target, counts, req, levels, vor, needs)
+        delta, target, drop = best
+        roster = [p for p in roster if p["id"] != drop["id"]] + [target]
+        used_targets.add(target["id"])
+        used_drops.add(drop["id"])
 
-        if not drop:
-            break
+        why = [f"Verbessert deine Startaufstellung um {round(delta, 1)} Punkte "
+               f"({target['pos']} rein, {drop['pos']} raus)."]
+        why.extend(target.get("signals", [])[:2])
 
-        # Only a genuinely startable add closes a gap; a stopgap leaves the need
-        # open. adds_per_pos still counts it, so one position cannot loop forever.
-        if is_startable(target, levels):
-            counts[target["pos"]] = counts.get(target["pos"], 0) + 1
-        adds_per_pos[target["pos"]] = adds_per_pos.get(target["pos"], 0) + 1
-        if drop_was_startable:
-            counts[drop["pos"]] = counts.get(drop["pos"], 0) - 1
-
-        why = []
-        if need:
-            why.append(need["reason"])
-        else:
-            why.append(f"Upgrade auf {target['pos']}: {vor(target)} über Replacement "
-                       f"gegen {vor(drop)} bei {drop['name']}.")
-        why.extend(target["signals"][:2])
-
+        after = lineup.build_lineup(roster, roster_positions, _start_value)
         moves.append({
             "drop": drop,
             "add": target,
             "reason": " ".join(why),
-            "faab": target["faab"],
+            "faab": target.get("faab"),
             "balance": {
                 "pos_in": target["pos"],
-                "pos_out": drop["pos"] if drop_was_startable else None,
-                # A stopgap below replacement level does not close the gap; saying
-                # so beats reporting a startable count that did not move.
-                "add_startable": is_startable(target, levels),
-                "after": {p: c for p, c in sorted(counts.items()) if c},
+                "pos_out": drop["pos"],
+                "lineup_gain": round(delta, 1),
+                "starts": target["id"] in {p["id"] for _, p in after if p is not None},
+                "empty_slots": [s for s, p in after if p is None],
             },
         })
-        used_targets.add(target["id"])
-        used_drops.add(drop["id"])
 
     return moves
 
 
-def _pick_drop(droppable, used_drops, target, counts, req, levels, vor, needs):
-    """The cheapest player we can spare without weakening a position we need.
-
-    Tried in two passes so the roster keeps its shape: first players whose
-    position can genuinely spare a body, only then anyone else.
-    """
-    strained = {n["pos"] for n in needs if n["severity"] >= 2}
-
-    def eligible(d, allow_strained=False):
-        if d["id"] in used_drops or d["id"] == target["id"]:
-            return None
-        if vor(d) >= vor(target):
-            return None
-        was_startable = is_startable(d, levels)
-        # Never rob a starter from a position that is itself short: that is how
-        # "drop 3 LBs to add 3 DBs" happened. A bench body there is fair game
-        # once nothing else is left, since he fills no starting slot anyway.
-        if d["pos"] in strained and d["pos"] != target["pos"]:
-            if not allow_strained or was_startable:
-                return None
-        if was_startable:
-            slots = int(round(req.get(d["pos"], 0)))
-            if counts.get(d["pos"], 0) - 1 < slots:
-                return None  # would open a starting slot we cannot fill
-        return was_startable
-
-    def has_surplus(pos):
-        return counts.get(pos, 0) > int(round(req.get(pos, 0)))
-
-    # Pass 1: same position as the add (shape neutral), or a position with depth.
-    for d in droppable:
-        was_startable = eligible(d)
-        if was_startable is None:
-            continue
-        if d["pos"] == target["pos"] or has_surplus(d["pos"]):
-            return d, was_startable
-
-    # Pass 2: anything left that is not strained.
-    for d in droppable:
-        was_startable = eligible(d)
-        if was_startable is not None:
-            return d, was_startable
-
-    # Pass 3: last resort - a bench body at a short position. Costs no slot.
-    for d in droppable:
-        was_startable = eligible(d, allow_strained=True)
-        if was_startable is not None:
-            return d, was_startable
-    return None, False
+def _player_entry(pid, player, stats, college_data, sig, levels, extra=None):
+    """One enriched player record, keyed by the positions the league's slots use."""
+    p_stats = stats.get(str(pid), {})
+    rvs = calculate_rvs(player, p_stats, sig)
+    dvs = calculate_dvs(player, p_stats, college_data, sig)
+    entry = {
+        "id": str(pid),
+        "name": f"{player.get('first_name')} {player.get('last_name')}",
+        "pos": canonical_pos(player),
+        "elig": lineup.player_positions(player),
+        "real_pos": player.get("position"),
+        "team": player.get("team") or "FA",
+        "age": player.get("age", "N/A"),
+        "exp": player.get("years_exp", 0),
+        "status": player.get("status", "Active"),
+        "rvs": rvs,
+        "dvs": dvs,
+        "signals": sig["labels"] if sig else [],
+        "injury": sig["injury"] if sig else None,
+    }
+    if extra:
+        entry.update(extra)
+    return entry
 
 
 def analyze_waivers_api(username, league_id, sport="nfl"):
@@ -885,9 +863,8 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     scoring_settings = league_info.get("scoring_settings") or {}
     league_settings = league_info.get("settings") or {}
     num_teams = league_info.get("total_rosters") or 12
-    waiver_budget = league_settings.get("waiver_budget") if league_settings.get("waiver_type") == 2 else None
-
-    is_idp = any(pos in roster_positions for pos in ['LB', 'DB', 'DL', 'IDP_FLEX'])
+    waiver_budget = (league_settings.get("waiver_budget")
+                     if league_settings.get("waiver_type") == 2 else None)
 
     rosters = sleeper_api.get_rosters(league_id)
     if not rosters:
@@ -908,117 +885,196 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     stats = load_multi_year_stats(recent_seasons(sport), scoring_settings, players, sport)
     signals_by_pid = signals.build_signals(players, sport)
 
-    rostered_ids = set()
-    for r in rosters:
-        for pid in (r.get("players") or []):
-            rostered_ids.add(str(pid))
+    rostered_ids = {str(pid) for r in rosters for pid in (r.get("players") or [])}
 
     req = starter_requirements(roster_positions)
-    levels = replacement_levels(rosters, players, stats, college_data, signals_by_pid, req, num_teams)
+    levels = replacement_levels(rosters, players, stats, college_data,
+                                signals_by_pid, req, num_teams, sport)
 
     # ---- My roster -------------------------------------------------------
     my_players_stats = []
     for pid in my_player_ids:
-        p = players.get(str(pid), {})
-        p_stats = stats.get(str(pid), {})
+        p = players.get(str(pid))
+        if not p:
+            continue
         sig = signals_by_pid.get(str(pid))
-        rvs = calculate_rvs(p, p_stats, sig)
-        dvs = calculate_dvs(p, p_stats, college_data, sig)
-        pos = p.get("position", "UNK")
-        protection = drop_protection(p, dvs, rvs, sig, levels) if sig else None
-        threshold = levels.get(pos, {}).get("dvs", 0)
+        entry = _player_entry(pid, p, stats, college_data, sig, levels)
+        entry["protected"] = drop_protection(p, entry["dvs"], entry["rvs"], sig, levels) if sig else None
+        entry["is_liability"] = (entry["rvs"] < levels.get(entry["pos"], {}).get("rvs", 0)
+                                 and not entry["protected"])
+        my_players_stats.append(entry)
 
-        my_players_stats.append({
-            "id": str(pid),
-            "name": f"{p.get('first_name')} {p.get('last_name')}",
-            "pos": pos,
-            "team": p.get("team") or "FA",
-            "age": p.get("age", 0),
-            "exp": p.get("years_exp", 0),
-            "status": p.get("status", "Active"),
-            "rvs": rvs,
-            "dvs": dvs,
-            "signals": sig["labels"] if sig else [],
-            "injury": sig["injury"] if sig else None,
-            "protected": protection,
-            "is_liability": dvs < threshold and not protection,
-        })
-
-    needs = roster_needs(my_players_stats, req, levels)
+    needs = roster_needs(my_players_stats, roster_positions, levels)
     need_by_pos = {n["pos"]: n for n in needs}
 
-    # Droppable first: protected players sort to the back regardless of score.
-    my_players_stats.sort(key=lambda p: (p["protected"] is not None, p["dvs"]))
+    my_players_stats.sort(key=lambda p: (p["protected"] is not None, p["rvs"]))
 
     # ---- Available players ----------------------------------------------
-    valid_positions = offensive_positions(sport)
-    if is_idp:
-        valid_positions.extend(IDP_POSITIONS)
+    # Anyone whose eligibility touches a slot this league actually starts.
+    league_positions = set(lineup.positions_in_use(roster_positions))
 
     available = []
     for pid, p in players.items():
-        if pid in rostered_ids:
+        if pid in rostered_ids or not is_rosterable(p, sport):
             continue
-        pos = p.get("position")
-        if pos not in valid_positions:
-            continue
-
-        if not is_rosterable(p, sport):
+        if not (lineup.player_positions(p) & league_positions):
             continue
 
         sig = signals_by_pid.get(pid)
         intensity = sig["trend"].get("intensity") or 0
 
-        # Not on an NFL roster: a camp body unless the market says otherwise.
-        # The old filter kept teamless rookies and threw out exactly the veterans
-        # who had just been released and were being added everywhere.
+        # Not on a pro roster: a camp body unless the market says otherwise. The
+        # old filter kept teamless rookies and dropped exactly the veterans who
+        # had just been released and were being added everywhere.
         if p.get("team") in (None, "FA") and intensity < 0.05:
             continue
         if sig["injury"]["severity"] >= 4 and intensity < 0.05:
             continue
 
-        p_stats = stats.get(str(pid), {})
-        rvs = calculate_rvs(p, p_stats, sig)
-        dvs = calculate_dvs(p, p_stats, college_data, sig)
-        threshold = levels.get(pos, {}).get("dvs", 0)
-        is_upgrade = dvs >= threshold
+        entry = _player_entry(pid, p, stats, college_data, sig, levels)
+        pos = entry["pos"]
         severity = need_by_pos.get(pos, {}).get("severity", 0)
-        score = waiver_score(dvs, rvs, sig, severity)
-
-        available.append({
-            "id": pid,
-            "name": f"{p.get('first_name')} {p.get('last_name')}",
-            "pos": pos,
-            "team": p.get("team") or "FA",
-            "age": p.get("age", "N/A"),
-            "status": p.get("status", "Active"),
-            "rvs": rvs,
-            "dvs": dvs,
-            "score": score,
-            "signals": sig["labels"],
-            "injury": sig["injury"],
-            "opportunity": sig["opportunity"],
-            "trend": sig["trend"],
-            "is_upgrade": is_upgrade,
-            "faab": faab_recommendation(sig, severity, budget_left, is_upgrade),
-        })
+        entry["is_upgrade"] = entry["rvs"] >= levels.get(pos, {}).get("rvs", 0)
+        entry["opportunity"] = sig["opportunity"]
+        entry["trend"] = sig["trend"]
+        entry["score"] = waiver_score(entry["dvs"], entry["rvs"], sig, severity)
+        entry["faab"] = faab_recommendation(sig, severity, budget_left, entry["is_upgrade"])
+        available.append(entry)
 
     available.sort(key=lambda p: -p["score"])
 
-    # ---- Recommendations -------------------------------------------------
-    recommendations = plan_moves(my_players_stats, available, req, levels)
+    # Keep the board representative: the best of every position the league
+    # starts, so an IDP-heavy score distribution cannot crowd out every RB.
+    per_pos_cap = max(6, 40 // max(1, len(league_positions)))
+    board, seen = [], {}
+    for p in available:
+        if seen.get(p["pos"], 0) >= per_pos_cap:
+            continue
+        seen[p["pos"]] = seen.get(p["pos"], 0) + 1
+        board.append(p)
+
+    recommendations = plan_moves(my_players_stats, available, roster_positions, levels, needs)
 
     state = sleeper_api.get_state(sport) or {}
     activity = signals.league_activity(league_id, state.get("week") or 1, players)
 
+    lineup_now = lineup.lineup_report(my_players_stats, roster_positions, _start_value)
+
     return {
-        "drop_candidates": my_players_stats[:15],
-        "waiver_targets": available[:25],
-        "smart_recommendations": recommendations,
+        "drop_candidates": _strip(my_players_stats[:15]),
+        "waiver_targets": _strip(sorted(board, key=lambda p: -p["score"])),
+        "smart_recommendations": [
+            {**rec, "drop": _strip_one(rec["drop"]), "add": _strip_one(rec["add"])}
+            for rec in recommendations
+        ],
         "roster_needs": needs,
+        "lineup": {
+            "slots": [{"slot": s["slot"], "player": _strip_one(s["player"])}
+                      for s in lineup_now["slots"]],
+            "bench": _strip(lineup_now["bench"][:12]),
+            "total": lineup_now["total"],
+            "empty": lineup_now["empty"],
+        },
+        "positions": sorted(league_positions),
         "faab": {"budget": waiver_budget, "left": budget_left,
                  "waiver_type": league_settings.get("waiver_type")},
         "league_activity": activity,
+    }
+
+
+def _strip_one(player):
+    """`elig` is a set and not JSON serialisable; export it as a sorted list."""
+    if player is None:
+        return None
+    out = dict(player)
+    out["elig"] = sorted(out.get("elig") or [])
+    return out
+
+
+def _strip(players):
+    return [_strip_one(p) for p in players]
+
+
+def optimize_lineup_api(username, league_id, sport="nfl"):
+    """Best legal starting lineup for this roster, plus what sits behind it."""
+    user = sleeper_api.get_user(username)
+    if not user:
+        return {"error": "User not found"}
+    user_id = user["user_id"]
+
+    league_info = sleeper_api.get_league(league_id) or {}
+    roster_positions = league_info.get("roster_positions") or []
+    if not roster_positions:
+        return {"error": "Liga nicht gefunden oder ohne Roster-Konfiguration."}
+    scoring_settings = league_info.get("scoring_settings") or {}
+    num_teams = league_info.get("total_rosters") or 12
+
+    rosters = sleeper_api.get_rosters(league_id)
+    if not rosters:
+        return {"error": "Keine Roster für diese Liga gefunden."}
+    my_roster = next((r for r in rosters if r.get("owner_id") == user_id), None)
+    if not my_roster:
+        return {"error": "Roster not found"}
+    my_player_ids = my_roster.get("players") or []
+    if not my_player_ids:
+        return {"error": "Dein Roster in dieser Liga ist leer."}
+
+    players = load_players(sport)
+    college_data = load_college_stats()
+    stats = load_multi_year_stats(recent_seasons(sport), scoring_settings, players, sport)
+    signals_by_pid = signals.build_signals(players, sport)
+
+    req = starter_requirements(roster_positions)
+    levels = replacement_levels(rosters, players, stats, college_data,
+                                signals_by_pid, req, num_teams, sport)
+
+    squad = []
+    for pid in my_player_ids:
+        p = players.get(str(pid))
+        if not p:
+            continue
+        squad.append(_player_entry(pid, p, stats, college_data,
+                                   signals_by_pid.get(str(pid)), levels))
+
+    report = lineup.lineup_report(squad, roster_positions, _start_value)
+    starters = {s["player"]["id"] for s in report["slots"] if s["player"]}
+
+    slots = []
+    for entry in report["slots"]:
+        slot, player = entry["slot"], entry["player"]
+        accepts = lineup.slot_accepts(slot)
+        # Who else could take this slot if the starter is out?
+        alternatives = sorted(
+            (p for p in squad
+             if p["elig"] & accepts and p["id"] not in starters),
+            key=lambda p: -_start_value(p),
+        )[:3]
+        slots.append({
+            "slot": slot,
+            "accepts": sorted(accepts),
+            "player": _strip_one(player),
+            "alternatives": _strip(alternatives),
+        })
+
+    # A starter who is hurt is the thing you actually need to see here.
+    warnings = []
+    for entry in report["slots"]:
+        player = entry["player"]
+        if player and (player.get("injury") or {}).get("severity", 0) >= 1:
+            warnings.append({
+                "slot": entry["slot"],
+                "player": player["name"],
+                "injury": player["injury"],
+            })
+
+    return {
+        "league": {"name": league_info.get("name"), "teams": num_teams},
+        "slots": slots,
+        "bench": _strip(report["bench"]),
+        "total": report["total"],
+        "empty": report["empty"],
+        "warnings": warnings,
+        "positions": sorted(lineup.positions_in_use(roster_positions)),
     }
 
 
@@ -1182,7 +1238,7 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
 
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
-                                signals_by_pid, req, num_teams)
+                                signals_by_pid, req, num_teams, sport)
 
     # During a startup draft Sleeper leaves the rosters empty until it finishes,
     # so the picks made so far are the only picture of the team. Combine both:
@@ -1195,19 +1251,24 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
                 my_player_ids.append(pid)
 
     needs = []
+    my_squad = []
     if my_player_ids:
-        my_players = []
         for pid in my_player_ids:
-            p = players.get(str(pid), {})
-            p_stats = stats.get(str(pid), {})
-            sig = signals_by_pid.get(str(pid))
-            my_players.append({
-                "pos": p.get("position", "UNK"),
-                "dvs": calculate_dvs(p, p_stats, college_data, sig),
-            })
-        needs = roster_needs(my_players, req, levels)
+            p = players.get(str(pid))
+            if not p:
+                continue
+            my_squad.append(_player_entry(pid, p, stats, college_data,
+                                          signals_by_pid.get(str(pid)), levels))
+        needs = roster_needs(my_squad, roster_positions, levels)
 
     is_superflex = roster_positions.count('SUPER_FLEX') > 0
+    # A mock draft, or a league that no longer exists, gives us no roster config.
+    # Fall back to the sport's standard positions instead of an empty board.
+    league_positions = set(lineup.positions_in_use(roster_positions))
+    if not league_positions:
+        league_positions = set(offensive_positions(sport))
+        if sport == "nfl":
+            league_positions |= {"DL", "LB", "DB"}
 
     available = []
     for pid, p in players.items():
@@ -1222,17 +1283,16 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
         if player_type == 2 and years_exp == 0:
             continue
 
-        pos = p.get("position")
-        valid_positions = offensive_positions(sport)
-        if is_idp:
-            valid_positions.extend(IDP_POSITIONS)
-        if pos not in valid_positions:
+        # Eligible for a slot this league actually starts (fantasy_positions,
+        # so a cornerback matches a DB slot).
+        if not (lineup.player_positions(p) & league_positions):
             continue
 
         p_stats = stats.get(str(pid), {})
         sig = signals_by_pid.get(str(pid))
         rvs = calculate_rvs(p, p_stats, sig)
         dvs = calculate_dvs(p, p_stats, college_data, sig)
+        pos = canonical_pos(p)
 
         trade_value = dvs
         try:
@@ -1310,4 +1370,5 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
         "roster_needs": needs,
         "top_recommendations": top_recs,
         "best_available": available[:30],
+        "positions": sorted(league_positions),
     }
