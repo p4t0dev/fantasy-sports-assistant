@@ -4,44 +4,14 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-
-type Injury = {
-  status: string | null;
-  severity: number;
-  term: string | null;
-  label: string | null;
-};
-
-type Faab = { min: number; max: number; tier: string; budget_left: number };
-
-type Player = {
-  id: string;
-  name: string;
-  pos: string;
-  team: string;
-  age: number | string;
-  exp?: number;
-  status?: string;
-  rvs: number;
-  dvs: number;
-  score?: number;
-  signals?: string[];
-  injury?: Injury | null;
-  opportunity?: { score: number; label: string | null };
-  trend?: { adds: number; drops: number; net: number; label: string | null };
-  is_upgrade?: boolean;
-  protected?: string | null;
-  is_liability?: boolean;
-  faab?: Faab | null;
-};
-
-type Need = { pos: string; severity: number; reason: string };
+import type { Player, Need, Faab, Injury, LineupSlot } from "@/lib/types";
 
 type Balance = {
   pos_in: string;
   pos_out: string | null;
-  add_startable: boolean;
-  after: Record<string, number>;
+  lineup_gain: number;
+  starts: boolean;
+  empty_slots: string[];
 };
 
 type WaiverData = {
@@ -55,6 +25,8 @@ type WaiverData = {
     balance: Balance;
   }[];
   roster_needs: Need[];
+  lineup: { slots: LineupSlot[]; bench: Player[]; total: number; empty: string[] };
+  positions: string[];
   faab: { budget: number | null; left: number | null; waiver_type: number | null };
 };
 
@@ -202,8 +174,10 @@ function WaiversContent() {
   const faab = data?.faab;
 
   const severityByPos = new Map(needs.map((n) => [n.pos, n.severity]));
-  // Positions that actually appear on the board, need-carrying ones first.
-  const positions = [...new Set(targets.map((t) => t.pos))].sort(
+  // Every position this league starts, not just the ones that happen to appear
+  // in the top of the board - an IDP-heavy score distribution used to hide RB
+  // and WR from the filter entirely.
+  const positions = [...(data?.positions ?? [])].sort(
     (a, b) => (severityByPos.get(b) ?? 0) - (severityByPos.get(a) ?? 0) || a.localeCompare(b)
   );
   const visibleTargets = posFilter ? targets.filter((t) => t.pos === posFilter) : targets;
@@ -256,6 +230,9 @@ function WaiversContent() {
                 </span>
               </div>
               <p className="text-xs text-gray-300 leading-snug">{need.reason}</p>
+              <p className="text-[10px] text-gray-500 mt-1">
+                {need.startable}/{need.depth} startbar · {need.fixed_slots} feste Slots
+              </p>
             </div>
           ))}
         </div>
@@ -285,26 +262,17 @@ function WaiversContent() {
                   {rec.reason}
                 </p>
 
-                {rec.balance.add_startable ? (
-                  <p className="text-xs text-gray-400">
-                    Startbar danach:{" "}
-                    <span className="text-gray-200">
-                      {rec.balance.pos_in} {rec.balance.after[rec.balance.pos_in] ?? 0}
-                    </span>
-                    {rec.balance.pos_out && rec.balance.pos_out !== rec.balance.pos_in && (
-                      <>
-                        {" · "}
-                        <span className="text-gray-200">
-                          {rec.balance.pos_out} {rec.balance.after[rec.balance.pos_out] ?? 0}
-                        </span>
-                      </>
-                    )}
-                  </p>
-                ) : (
-                  <p className="text-xs text-amber-400/80">
-                    Überbrückung — schließt die Lücke auf {rec.balance.pos_in} noch nicht.
-                  </p>
-                )}
+                <p className="text-xs text-gray-400">
+                  Startaufstellung{" "}
+                  <span className="text-green-400 font-medium">
+                    +{rec.balance.lineup_gain}
+                  </span>
+                  {rec.balance.starts ? (
+                    <span className="text-gray-500"> · steht sofort in der Startelf</span>
+                  ) : (
+                    <span className="text-gray-500"> · zunächst Bank-Verstärkung</span>
+                  )}
+                </p>
 
                 <div className="flex items-center justify-between gap-3 border-b border-gray-700 pb-3">
                   <div className="flex flex-col gap-1 min-w-0">

@@ -1,18 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-
-type League = {
-  league_id: string;
-  name: string;
-  season: string;
-  status: string;
-  total_rosters: number;
-};
-
-type Draft = { draft_id: string; name: string; status: string; league_id: string | null };
+import type { League, Draft } from "@/lib/types";
+import {
+  subscribeToSearch,
+  getSearchSnapshot,
+  getSearchServerSnapshot,
+  writeSearch,
+  ageLabel,
+} from "@/lib/leagueCache";
 
 const SPORTS = [
   { id: "nfl", label: "NFL" },
@@ -20,15 +18,39 @@ const SPORTS = [
 ];
 
 export default function Dashboard() {
-  const [username, setUsername] = useState("p4t0b4ll3rs");
-  const [season, setSeason] = useState("all");
-  const [sport, setSport] = useState("nfl");
-  const [leagues, setLeagues] = useState<League[]>([]);
-  const [drafts, setDrafts] = useState<Draft[]>([]);
+  // The last search is restored from session storage, so coming back from a
+  // waiver or draft view does not force a reload of every league. Read through
+  // an external store rather than an effect: the static export is prerendered
+  // without storage, and this keeps hydration honest.
+  const cached = useSyncExternalStore(
+    subscribeToSearch,
+    getSearchSnapshot,
+    getSearchServerSnapshot
+  );
+
+  const [usernameInput, setUsernameInput] = useState<string | null>(null);
+  const [seasonInput, setSeasonInput] = useState<string | null>(null);
+  const [sportInput, setSportInput] = useState<string | null>(null);
+  const [fetched, setFetched] = useState<{ leagues: League[]; drafts: Draft[] } | null>(null);
+  const [extraLeagues, setExtraLeagues] = useState<League[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [manualId, setManualId] = useState("");
   const [manualLoading, setManualLoading] = useState(false);
+
+  const username = usernameInput ?? cached?.username ?? "p4t0b4ll3rs";
+  const season = seasonInput ?? cached?.season ?? "all";
+  const sport = sportInput ?? cached?.sport ?? "nfl";
+  const baseLeagues = fetched?.leagues ?? cached?.leagues ?? [];
+  const leagues = [
+    ...extraLeagues,
+    ...baseLeagues.filter((l) => !extraLeagues.some((e) => e.league_id === l.league_id)),
+  ];
+  const drafts = fetched?.drafts ?? cached?.drafts ?? [];
+  const cachedAt = fetched ? null : cached?.savedAt ?? null;
+
+  const setUsername = setUsernameInput;
+  const setSeason = setSeasonInput;
 
   const addManualLeague = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,7 +60,7 @@ export default function Dashboard() {
     try {
       const data = await apiGet<League>("get_single_league", { league_id: manualId.trim() });
       if (data?.league_id) {
-        setLeagues((prev) => [data, ...prev.filter((l) => l.league_id !== data.league_id)]);
+        setExtraLeagues((prev) => [data, ...prev.filter((l) => l.league_id !== data.league_id)]);
         setManualId("");
       }
     } catch (err) {
@@ -60,8 +82,10 @@ export default function Dashboard() {
         apiGet<League[]>("get_user_leagues", { username, season, sport }),
         apiGet<Draft[]>("get_user_drafts", { username, season, sport }),
       ]);
-      setLeagues(Array.isArray(leaguesData) ? leaguesData : []);
-      setDrafts(Array.isArray(draftsData) ? draftsData : []);
+      const nextLeagues = Array.isArray(leaguesData) ? leaguesData : [];
+      const nextDrafts = Array.isArray(draftsData) ? draftsData : [];
+      setFetched({ leagues: nextLeagues, drafts: nextDrafts });
+      writeSearch({ username, sport, season, leagues: nextLeagues, drafts: nextDrafts });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ein Fehler ist aufgetreten");
     } finally {
@@ -128,9 +152,9 @@ export default function Dashboard() {
                   key={s.id}
                   type="button"
                   onClick={() => {
-                    setSport(s.id);
-                    setLeagues([]);
-                    setDrafts([]);
+                    setSportInput(s.id);
+                    setFetched({ leagues: [], drafts: [] });
+                    setExtraLeagues([]);
                   }}
                   className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
                     sport === s.id ? "bg-blue-600 text-white shadow" : "text-gray-400 hover:text-white"
@@ -173,9 +197,16 @@ export default function Dashboard() {
 
       {(leagues.length > 0 || drafts.length > 0) && (
         <div className="space-y-6">
-          <h2 className="text-2xl font-bold text-white">
-            Deine Ligen &amp; Drafts <span className="text-gray-500 text-lg">({sport.toUpperCase()})</span>
-          </h2>
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h2 className="text-2xl font-bold text-white">
+              Deine Ligen &amp; Drafts <span className="text-gray-500 text-lg">({sport.toUpperCase()})</span>
+            </h2>
+            {cachedAt && (
+              <span className="text-xs text-gray-500">
+                zwischengespeichert {ageLabel(cachedAt)} · „Ligen laden“ holt neu
+              </span>
+            )}
+          </div>
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {leagues.map((league) => {
               const leagueDrafts = drafts.filter((d) => d.league_id === league.league_id);
