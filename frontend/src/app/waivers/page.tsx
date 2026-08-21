@@ -1,15 +1,22 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { Player, Need, Faab, Injury, LineupSlot } from "@/lib/types";
+import type { Player, Need, Faab, LineupSlot } from "@/lib/types";
+import {
+  InjuryBadge,
+  TrendBadge,
+  SignalBadges,
+  PosChip,
+} from "@/components/PlayerBadges";
 
 type Balance = {
   pos_in: string;
   pos_out: string | null;
   lineup_gain: number;
+  dvs_gain?: number;
   starts: boolean;
   empty_slots: string[];
 };
@@ -18,6 +25,7 @@ type WaiverData = {
   drop_candidates: Player[];
   waiver_targets: Player[];
   smart_recommendations: {
+    kind: "lineup" | "depth";
     drop: Player;
     add: Player;
     reason: string;
@@ -38,38 +46,24 @@ const SEVERITY_STYLES: Record<number, string> = {
 
 const SEVERITY_LABELS: Record<number, string> = { 3: "Kritisch", 2: "Ungesichert", 1: "Dünn" };
 
-function InjuryBadge({ injury }: { injury?: Injury | null }) {
-  if (!injury?.status) return null;
-  const critical = injury.severity >= 3;
-  return (
-    <span
-      title={injury.label ?? undefined}
-      className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border ${
-        critical
-          ? "bg-red-900/40 text-red-300 border-red-700"
-          : "bg-yellow-900/40 text-yellow-300 border-yellow-700"
-      }`}
-    >
-      {injury.status}
-    </span>
-  );
-}
+const SLOT_LABELS: Record<string, string> = {
+  SUPER_FLEX: "SUPERFLEX",
+  IDP_FLEX: "IDP FLEX",
+  REC_FLEX: "REC FLEX",
+  WRRB_FLEX: "WR/RB FLEX",
+};
+const slotLabel = (slot: string) => SLOT_LABELS[slot] ?? slot;
 
-function TrendBadge({ player }: { player: Player }) {
-  if (!player.trend?.label) return null;
-  const rising = (player.trend.net ?? 0) >= 0;
-  return (
-    <span
-      className={`text-[10px] px-1.5 py-0.5 rounded font-bold border ${
-        rising
-          ? "bg-emerald-900/40 text-emerald-300 border-emerald-700"
-          : "bg-gray-800 text-gray-400 border-gray-700"
-      }`}
-    >
-      {rising ? "▲" : "▼"} {player.trend.label}
-    </span>
-  );
-}
+// The board answers more than one question, so it gets more than one order.
+// Ranking by waiver score alone is what made this view disagree with the draft
+// board, which sorts by dynasty value — both are right, for different questions.
+const SORTS = [
+  { id: "score", label: "Waiver-Score", of: (p: Player) => p.score ?? 0 },
+  { id: "pts", label: "Projektion", of: (p: Player) => p.pts ?? 0 },
+  { id: "dvs", label: "Dynasty (DVS)", of: (p: Player) => p.dvs ?? 0 },
+] as const;
+
+type SortId = (typeof SORTS)[number]["id"];
 
 function FaabPill({ faab }: { faab?: Faab | null }) {
   if (!faab) return null;
@@ -87,6 +81,85 @@ function FaabPill({ faab }: { faab?: Faab | null }) {
   );
 }
 
+/** Position filter chips, shared by the target board and the drop list. */
+function PosFilter({
+  positions,
+  counts,
+  active,
+  onPick,
+  tone,
+  severityByPos,
+  needs,
+}: {
+  positions: string[];
+  counts: (pos: string) => number;
+  active: string | null;
+  onPick: (pos: string | null) => void;
+  tone: string;
+  severityByPos?: Map<string, number>;
+  needs?: Need[];
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      <button
+        onClick={() => onPick(null)}
+        className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors ${
+          active === null ? tone : "bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
+        }`}
+      >
+        Alle
+      </button>
+      {positions.map((pos) => {
+        const severity = severityByPos?.get(pos) ?? 0;
+        const isActive = active === pos;
+        return (
+          <button
+            key={pos}
+            onClick={() => onPick(isActive ? null : pos)}
+            title={severity ? needs?.find((n) => n.pos === pos)?.reason : undefined}
+            className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors flex items-center gap-1 ${
+              isActive ? tone : "bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
+            }`}
+          >
+            {pos}
+            <span className="opacity-60">{counts(pos)}</span>
+            {severity >= 2 && (
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  severity >= 3 ? "bg-red-500" : "bg-orange-400"
+                }`}
+              />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** One roster player: name, signals, and the numbers behind him. */
+function RosterRow({ player, hint }: { player: Player; hint?: string }) {
+  return (
+    <div className="glass-panel p-3 flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="text-sm text-white flex items-center gap-2 flex-wrap">
+          {player.name}
+          <InjuryBadge injury={player.injury} />
+        </div>
+        <div className="text-xs text-gray-500">
+          {player.elig?.join("/") || player.pos} • {player.team} • Age {player.age}
+          {hint && <span className="text-gray-600"> · {hint}</span>}
+        </div>
+        <SignalBadges player={player} />
+      </div>
+      <div className="flex flex-col items-end shrink-0">
+        <span className="text-sm font-bold text-blue-300">{player.pts}</span>
+        <span className="text-[10px] text-gray-500 uppercase tracking-wider">Proj</span>
+      </div>
+    </div>
+  );
+}
+
 function WaiversContent() {
   const searchParams = useSearchParams();
   const username = searchParams.get("username");
@@ -99,6 +172,9 @@ function WaiversContent() {
   const [error, setError] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
   const [posFilter, setPosFilter] = useState<string | null>(null);
+  const [dropFilter, setDropFilter] = useState<string | null>(null);
+  const [sortId, setSortId] = useState<SortId>("score");
+  const [showTeam, setShowTeam] = useState(true);
 
   // State is only written after the await, so the effect never triggers a
   // synchronous cascading render.
@@ -132,10 +208,40 @@ function WaiversContent() {
     };
   }, [username, leagueId, sport, reloadToken]);
 
-  const refresh = () => {
-    setRefreshing(true);
-    setReloadToken((token) => token + 1);
-  };
+  const needs = useMemo(() => data?.roster_needs ?? [], [data]);
+  const targets = useMemo(() => data?.waiver_targets ?? [], [data]);
+  const drops = useMemo(() => data?.drop_candidates ?? [], [data]);
+
+  const severityByPos = useMemo(
+    () => new Map(needs.map((n) => [n.pos, n.severity])),
+    [needs]
+  );
+
+  // Every position this league starts, not just the ones that happen to appear
+  // in the top of the board - an IDP-heavy score distribution used to hide RB
+  // and WR from the filter entirely.
+  const positions = useMemo(
+    () =>
+      [...(data?.positions ?? [])].sort(
+        (a, b) => (severityByPos.get(b) ?? 0) - (severityByPos.get(a) ?? 0) || a.localeCompare(b)
+      ),
+    [data, severityByPos]
+  );
+
+  const visibleTargets = useMemo(() => {
+    const sort = SORTS.find((s) => s.id === sortId) ?? SORTS[0];
+    const list = posFilter ? targets.filter((t) => t.pos === posFilter) : targets;
+    return [...list].sort((a, b) => sort.of(b) - sort.of(a));
+  }, [targets, posFilter, sortId]);
+
+  const dropPositions = useMemo(
+    () => [...new Set(drops.map((d) => d.pos))].sort(),
+    [drops]
+  );
+  const visibleDrops = useMemo(
+    () => (dropFilter ? drops.filter((d) => d.pos === dropFilter) : drops),
+    [drops, dropFilter]
+  );
 
   if (!username || !leagueId) {
     return (
@@ -167,20 +273,9 @@ function WaiversContent() {
     );
   }
 
-  const needs = data?.roster_needs ?? [];
   const recommendations = data?.smart_recommendations ?? [];
-  const targets = data?.waiver_targets ?? [];
-  const drops = data?.drop_candidates ?? [];
+  const lineup = data?.lineup;
   const faab = data?.faab;
-
-  const severityByPos = new Map(needs.map((n) => [n.pos, n.severity]));
-  // Every position this league starts, not just the ones that happen to appear
-  // in the top of the board - an IDP-heavy score distribution used to hide RB
-  // and WR from the filter entirely.
-  const positions = [...(data?.positions ?? [])].sort(
-    (a, b) => (severityByPos.get(b) ?? 0) - (severityByPos.get(a) ?? 0) || a.localeCompare(b)
-  );
-  const visibleTargets = posFilter ? targets.filter((t) => t.pos === posFilter) : targets;
 
   return (
     <div className="space-y-8">
@@ -201,12 +296,21 @@ function WaiversContent() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={refresh}
+            onClick={() => {
+              setRefreshing(true);
+              setReloadToken((token) => token + 1);
+            }}
             disabled={refreshing}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-bold"
           >
             {refreshing ? "Aktualisiere…" : "↻ Neu laden"}
           </button>
+          <Link
+            href={`/lineup?username=${username}&league_id=${leagueId}&sport=${sport}`}
+            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors text-sm font-medium"
+          >
+            Lineup →
+          </Link>
           <Link
             href="/"
             className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors text-sm font-medium"
@@ -252,8 +356,14 @@ function WaiversContent() {
                 className="glass-panel p-5 border border-blue-500/30 bg-blue-900/10 flex flex-col gap-4"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-xs text-blue-300 uppercase font-bold tracking-wider">
-                    Move {idx + 1}
+                  <span
+                    className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded border ${
+                      rec.kind === "lineup"
+                        ? "text-green-300 border-green-700 bg-green-900/30"
+                        : "text-gray-300 border-gray-700 bg-gray-800"
+                    }`}
+                  >
+                    {rec.kind === "lineup" ? "Startelf-Upgrade" : "Kadertiefe"}
                   </span>
                   <FaabPill faab={rec.faab} />
                 </div>
@@ -262,17 +372,25 @@ function WaiversContent() {
                   {rec.reason}
                 </p>
 
-                <p className="text-xs text-gray-400">
-                  Startaufstellung{" "}
-                  <span className="text-green-400 font-medium">
-                    +{rec.balance.lineup_gain}
-                  </span>
-                  {rec.balance.starts ? (
-                    <span className="text-gray-500"> · steht sofort in der Startelf</span>
-                  ) : (
-                    <span className="text-gray-500"> · zunächst Bank-Verstärkung</span>
-                  )}
-                </p>
+                {rec.kind === "lineup" ? (
+                  <p className="text-xs text-gray-400">
+                    Startaufstellung{" "}
+                    <span className="text-green-400 font-medium">
+                      +{rec.balance.lineup_gain}
+                    </span>
+                    {rec.balance.starts ? (
+                      <span className="text-gray-500"> · steht sofort in der Startelf</span>
+                    ) : (
+                      <span className="text-gray-500"> · zunächst Bank-Verstärkung</span>
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400">
+                    Dynasty-Wert{" "}
+                    <span className="text-green-400 font-medium">+{rec.balance.dvs_gain}</span>
+                    <span className="text-gray-500"> · verändert die Startelf nicht</span>
+                  </p>
+                )}
 
                 <div className="flex items-center justify-between gap-3 border-b border-gray-700 pb-3">
                   <div className="flex flex-col gap-1 min-w-0">
@@ -286,9 +404,15 @@ function WaiversContent() {
                     </span>
                     <TrendBadge player={rec.add} />
                   </div>
-                  <div className="flex flex-col items-end shrink-0">
-                    <span className="text-xs text-gray-500">DVS</span>
-                    <span className="text-green-400 font-bold">{rec.add.dvs}</span>
+                  <div className="flex gap-3 text-right shrink-0">
+                    <div className="flex flex-col">
+                      <span className="text-blue-300 font-bold">{rec.add.pts}</span>
+                      <span className="text-[10px] text-gray-500 uppercase">Proj</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-green-400 font-bold">{rec.add.dvs}</span>
+                      <span className="text-[10px] text-gray-500 uppercase">DVS</span>
+                    </div>
                   </div>
                 </div>
 
@@ -300,9 +424,15 @@ function WaiversContent() {
                       {rec.drop.pos} • {rec.drop.team}
                     </span>
                   </div>
-                  <div className="flex flex-col items-end shrink-0">
-                    <span className="text-xs text-gray-500">DVS</span>
-                    <span className="text-red-400 font-bold">{rec.drop.dvs}</span>
+                  <div className="flex gap-3 text-right shrink-0">
+                    <div className="flex flex-col">
+                      <span className="text-gray-300 font-bold">{rec.drop.pts}</span>
+                      <span className="text-[10px] text-gray-500 uppercase">Proj</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-red-400 font-bold">{rec.drop.dvs}</span>
+                      <span className="text-[10px] text-gray-500 uppercase">DVS</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -311,9 +441,85 @@ function WaiversContent() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+      {lineup && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
+            <div className="w-2 h-8 bg-purple-500 rounded-full"></div>
+            <h2 className="text-xl font-bold text-white">Mein Team</h2>
+            <span className="text-sm text-gray-500">
+              Startaufstellung {lineup.total} Punkte projiziert
+            </span>
+            <button
+              onClick={() => setShowTeam((v) => !v)}
+              className="ml-auto px-3 py-1 rounded-md text-xs font-semibold border bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
+            >
+              {showTeam ? "Einklappen" : "Ausklappen"}
+            </button>
+          </div>
+
+          {showTeam && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
+                  Startaufstellung
+                </h3>
+                {lineup.slots.map((s, idx) => (
+                  <div
+                    key={`${s.slot}-${idx}`}
+                    className={`glass-panel p-3 flex items-start gap-3 ${
+                      s.player ? "" : "border-l-4 border-l-red-500 bg-red-900/10"
+                    }`}
+                  >
+                    <div className="w-20 shrink-0 text-center py-1 rounded-md bg-gray-900 border border-gray-700 text-[11px] font-bold text-gray-300">
+                      {slotLabel(s.slot)}
+                    </div>
+                    {s.player ? (
+                      <div className="flex-1 min-w-0 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm text-white flex items-center gap-2 flex-wrap">
+                            {s.player.name}
+                            <InjuryBadge injury={s.player.injury} />
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {s.player.pos} • {s.player.team} • Age {s.player.age}
+                          </div>
+                          <SignalBadges player={s.player} />
+                        </div>
+                        <div className="flex flex-col items-end shrink-0">
+                          <span className="text-sm font-bold text-blue-300">{s.player.pts}</span>
+                          <span className="text-[10px] text-gray-500 uppercase">Proj</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-red-400 text-sm font-medium self-center">
+                        Kein zulässiger Spieler
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
+                  Bank ({lineup.bench.length})
+                </h3>
+                {lineup.bench.map((p) => (
+                  <RosterRow key={p.id} player={p} />
+                ))}
+                {lineup.bench.length === 0 && (
+                  <div className="glass-panel p-4 text-center text-gray-500 text-sm">
+                    Alle Spieler stehen in der Aufstellung.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="w-2 h-8 bg-green-500 rounded-full"></div>
             <h2 className="text-xl font-bold text-white">Top Targets</h2>
             <span className="text-sm text-gray-500">
@@ -321,44 +527,32 @@ function WaiversContent() {
             </span>
           </div>
 
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              onClick={() => setPosFilter(null)}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors ${
-                posFilter === null
-                  ? "bg-green-600 text-white border-green-500"
-                  : "bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
-              }`}
-            >
-              Alle
-            </button>
-            {positions.map((pos) => {
-              const severity = severityByPos.get(pos) ?? 0;
-              const active = posFilter === pos;
-              return (
-                <button
-                  key={pos}
-                  onClick={() => setPosFilter(active ? null : pos)}
-                  title={severity ? needs.find((n) => n.pos === pos)?.reason : undefined}
-                  className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors flex items-center gap-1 ${
-                    active
-                      ? "bg-green-600 text-white border-green-500"
-                      : "bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
-                  }`}
-                >
-                  {pos}
-                  <span className="opacity-60">{targets.filter((t) => t.pos === pos).length}</span>
-                  {severity >= 2 && (
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        severity >= 3 ? "bg-red-500" : "bg-orange-400"
-                      }`}
-                    />
-                  )}
-                </button>
-              );
-            })}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-gray-500 mr-1">Sortieren:</span>
+            {SORTS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSortId(s.id)}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors ${
+                  sortId === s.id
+                    ? "bg-blue-600 text-white border-blue-500"
+                    : "bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
+
+          <PosFilter
+            positions={positions}
+            counts={(pos) => targets.filter((t) => t.pos === pos).length}
+            active={posFilter}
+            onPick={setPosFilter}
+            tone="bg-green-600 text-white border-green-500"
+            severityByPos={severityByPos}
+            needs={needs}
+          />
 
           <div className="space-y-3">
             {visibleTargets.map((player) => (
@@ -367,9 +561,7 @@ function WaiversContent() {
                 className="glass-panel p-4 flex justify-between items-start gap-4 border-l-4 border-l-green-500/50"
               >
                 <div className="flex items-start gap-4 min-w-0">
-                  <div className="w-10 h-10 shrink-0 rounded-full bg-gray-800 flex items-center justify-center font-bold text-gray-300 text-xs border border-gray-700">
-                    {player.pos}
-                  </div>
+                  <PosChip pos={player.pos} />
                   <div className="min-w-0">
                     <h4 className="text-white font-medium flex items-center gap-2 flex-wrap">
                       {player.name}
@@ -383,26 +575,19 @@ function WaiversContent() {
                     <p className="text-sm text-gray-400">
                       {player.team} • Age {player.age}
                     </p>
-                    <div className="flex flex-wrap gap-1.5 mt-1.5">
-                      <TrendBadge player={player} />
-                      {player.opportunity?.label && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-indigo-900/40 text-indigo-200 border border-indigo-700">
-                          ↑ {player.opportunity.label}
-                        </span>
-                      )}
-                    </div>
+                    <SignalBadges player={player} />
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-2 shrink-0">
                   <FaabPill faab={player.faab} />
                   <div className="flex gap-3 text-right">
                     <div className="flex flex-col">
-                      <span className="text-sm font-bold text-green-400">{player.dvs}</span>
-                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">DVS</span>
+                      <span className="text-sm font-bold text-blue-300">{player.pts}</span>
+                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">Proj</span>
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-sm font-bold text-gray-300">{player.rvs}</span>
-                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">RVS</span>
+                      <span className="text-sm font-bold text-green-400">{player.dvs}</span>
+                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">DVS</span>
                     </div>
                   </div>
                 </div>
@@ -415,10 +600,21 @@ function WaiversContent() {
           <div className="flex items-center gap-2">
             <div className="w-2 h-8 bg-red-500 rounded-full"></div>
             <h2 className="text-xl font-bold text-white">Drop-Kandidaten</h2>
+            <span className="text-sm text-gray-500">
+              {visibleDrops.length} von {drops.length}
+            </span>
           </div>
 
+          <PosFilter
+            positions={dropPositions}
+            counts={(pos) => drops.filter((d) => d.pos === pos).length}
+            active={dropFilter}
+            onPick={setDropFilter}
+            tone="bg-red-600 text-white border-red-500"
+          />
+
           <div className="space-y-3">
-            {drops.map((player) => (
+            {visibleDrops.map((player) => (
               <div
                 key={player.id}
                 className={`glass-panel p-4 flex justify-between items-start gap-4 ${
@@ -430,9 +626,7 @@ function WaiversContent() {
                 }`}
               >
                 <div className="flex items-start gap-4 min-w-0">
-                  <div className="w-10 h-10 shrink-0 rounded-full bg-gray-800 flex items-center justify-center font-bold text-gray-300 text-xs border border-gray-700">
-                    {player.pos}
-                  </div>
+                  <PosChip pos={player.pos} />
                   <div className="min-w-0">
                     <h4 className="text-white font-medium flex items-center gap-2 flex-wrap">
                       {player.name}
@@ -449,16 +643,17 @@ function WaiversContent() {
                     {player.protected && (
                       <p className="text-xs text-amber-300/90 mt-1">{player.protected}</p>
                     )}
+                    <SignalBadges player={player} />
                   </div>
                 </div>
                 <div className="flex gap-3 text-right shrink-0">
                   <div className="flex flex-col">
-                    <span className="text-sm font-bold text-white">{player.dvs}</span>
-                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">DVS</span>
+                    <span className="text-sm font-bold text-blue-300">{player.pts}</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">Proj</span>
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-400">{player.rvs}</span>
-                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">RVS</span>
+                    <span className="text-sm font-bold text-white">{player.dvs}</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">DVS</span>
                   </div>
                 </div>
               </div>

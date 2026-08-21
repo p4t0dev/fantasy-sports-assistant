@@ -31,6 +31,9 @@ BLOCKING_CLEARED_AT = 3
 
 TRENDING_LIMIT = 100  # Sleeper caps the endpoint at 100 regardless of `limit`.
 
+# How recent a news update has to be before it is worth showing at all.
+NEWS_FRESH_DAYS = 3
+
 
 def _fmt_count(n):
     if n >= 1000000:
@@ -214,6 +217,13 @@ def build_signals(players, sport="nfl", lookback_hours=24, trending=None):
         labels = [l for l in (opp["label"], trend.get("label"), inj["label"]) if l]
         if rec["team_changed_days"] is not None and rec["team_changed_days"] <= 14:
             labels.append("Teamwechsel vor %d Tagen" % rec["team_changed_days"])
+        # Sleeper's public API carries no news *text*, only the timestamp of the
+        # last update. Recency is therefore the whole of the available news
+        # signal - and it was being computed and then dropped on the floor.
+        news_days = rec["news_days"]
+        if news_days is not None and news_days <= NEWS_FRESH_DAYS:
+            labels.append("News heute" if news_days == 0
+                          else "News vor %d Tag%s" % (news_days, "" if news_days == 1 else "en"))
 
         signals[pid] = {
             "injury": inj,

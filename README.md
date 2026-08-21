@@ -17,6 +17,7 @@ Functions rufen sie beide auf — es gibt keine zweite Kopie mehr.
 ### Module
 
 - `functions/sleeper_api.py` — dünne Wrapper um die Sleeper-REST-API
+- `functions/projections.py` — Saisonprognosen (forward-looking Produktionsterm)
 - `functions/signals.py` — Signal-Layer: Verletzungsstatus, Depth-Chart-Chancen,
   Trending-Adds/Drops, Liga-Transaktionen
 - `functions/api_core.py` — Datenschicht, Scoring-Modell (RVS/DVS), Waiver- und
@@ -24,6 +25,26 @@ Functions rufen sie beide auf — es gibt keine zweite Kopie mehr.
 - `functions/main.py` — HTTP-Endpunkte + täglicher Datenrefresh
 
 ## Bewertungsmodell
+
+**Projektionen sind der Produktionsterm.** Sleeper liefert Saisonprognosen im
+selben Stat-Schema wie die Stats-Dateien, also laufen sie durch dasselbe
+`calculate_custom_score` mit dem Scoring *dieser* Liga — es gibt kein zweites
+Scoring-Modell. Ein rein historisches Modell liegt in der Vorsaison in beide
+Richtungen daneben: ein Rookie hat keine Historie und ist damit null wert, ein
+Veteran ohne Job trägt noch die Produktion des Vorjahres. Beides landet auf
+demselben Kader.
+
+Wichtig: liegt eine Projektion vor, entfallen der Depth-Chart- und der
+Teamstärke-Multiplikator. Sleeper hat beides bereits eingepreist; ein zweites
+Mal angewandt war es Doppelbestrafung. Der Verletzungsmultiplikator greift
+weiter — eine Meldung von heute ist jünger als die Prognose.
+
+**Punkte (`pts`)** — projizierte Saisonpunkte, **ohne** Positionsnormalisierung.
+Das ist die Währung der Aufstellung. RVS skaliert QBs runter und TEs hoch, damit
+*Assets* vergleichbar werden; für einen FLEX-Platz zählen dagegen echte Punkte.
+Die Aufstellung über RVS zu bauen hieß, dass ein TE mit 150 projizierten Punkten
+einen RB mit 170 verdrängt und ein 333-Punkte-QB seinen SUPER_FLEX-Platz an
+einen 292-Punkte-RB verliert.
 
 **RVS (Redraft Value Score)** — Wert für die *laufende* Saison.
 Produktion × Positionsnormalisierung × Rolle × Team × kurzfristige Verfügbarkeit.
@@ -41,6 +62,15 @@ Ausfall darf den Marktwert eines Spielers nicht skalieren.
 Liga noch irgendwo starten würde (`Teams × Starterplätze`-ter bester Spieler auf
 der Position). Erst dadurch wird ein DB mit einem WR vergleichbar.
 
+**Bedarfsschwere** — zwei Signale, `gain` und `depth`. `gain` misst direkt, was
+ein Liga-Durchschnitts-Starter der Aufstellung hinzufügen würde; `depth` zählt
+Köpfe über dem Replacement Level. Gemeldet wird das schlechtere der beiden, mit
+einer Ausnahme: **eine Position mit `gain == 0` und ohne leeren Slot kann nie
+„kritisch" sein.** Nur `gain` misst die Aufstellung selbst. Ohne diese Regel
+machte die hohe Replacement-Schwelle einer tiefen Liga jeden normalen Kader
+flächendeckend rot — jede Position kritisch, auf einer Aufstellung ohne eine
+einzige Lücke.
+
 **Move-Planung** — Empfehlungen entstehen als *Sequenz*, nicht als Liste
 unabhängiger Ideen. Jeder akzeptierte Move schreibt den simulierten Kader fort,
 bevor der nächste gewählt wird. Daraus folgen drei Regeln:
@@ -50,15 +80,37 @@ bevor der nächste gewählt wird. Daraus folgen drei Regeln:
 - Höchstens zwei Zugänge pro Position, damit eine Position nicht das ganze
   Budget bindet
 
+Kann kein Zugang die Startelf verbessern — der Normalfall in einer tiefen Liga
+mit vollem Kader —, folgt eine zweite Stufe für **Kadertiefe**: der schwächste
+Spieler, der weder startet noch über Replacement Level liegt, gegen das beste
+verfügbare Asset. Diese Moves sind als `kind: "depth"` markiert und behaupten
+keinen Aufstellungsgewinn.
+
 **Waiver-Score** — ein eigenes Ranking, nicht identisch mit DVS:
 
 ```
-Score = (0.6·RVS + 0.4·DVS) × Chance × Marktdruck
+Score = (max(0, pts − Replacement) + 0.35·pts + 0.25·DVS)
+        × Chance × Marktdruck
         + Marktdruck-Bonus + Chancen-Bonus + Bedarfs-Bonus
 ```
 
+Verankert an projizierten Punkten **über Replacement Level** — die einzige Zahl,
+die sagt, ob ein Zugang überhaupt etwas ausrichten kann. Die Marktterme sind
+Modifikatoren darauf, kein Ersatz dafür: ein pauschaler `+160` für Trending
+überstieg den kompletten Grundwert eines Randspielers, weshalb das Board sich
+mit dem füllte, was gerade heiß war, unabhängig von jeder Prognose.
+
 Trending-Daten werden **live pro Request** geholt und sind damit unabhängig vom
 Alter des Spieler-Snapshots.
+
+## Ligenliste
+
+Eine Dynasty-Liga bekommt pro Saison eine neue `league_id` und ist über
+`previous_league_id` rückwärts verkettet. „Alle Saisons“ lieferte dieselbe Liga
+deshalb dreifach — und jede Liga, die man seit 2024 verlassen hatte, gleich
+mit. Ligen, auf die eine andere Liga der Liste zurückzeigt, sind Vorsaisons und
+werden entfernt; abgeschlossene Saisons kommen als `archived` markiert zurück
+und sind im Dashboard hinter „Archiv einblenden“ erreichbar.
 
 ## Setup
 
@@ -138,8 +190,9 @@ ihn in `localStorage` dieses Browsers ab.
 
 ## Daten
 
-`players.json`, `stats_*.json` und `college_stats.json` sind bewusst **nicht**
-eingecheckt (players.json allein ist 16 MB). Sie werden erzeugt durch:
+`players.json`, `stats_*.json`, `projections_*.json` und `college_stats.json`
+sind bewusst **nicht** eingecheckt (players.json allein ist 16 MB). Sie werden
+erzeugt durch:
 
 - die geplante Function `refresh_data` (täglich 06:00 Europe/Berlin), oder
 - den Button „Daten aktualisieren“, oder
