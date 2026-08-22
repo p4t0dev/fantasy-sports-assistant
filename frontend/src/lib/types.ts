@@ -75,6 +75,19 @@ export type Need = {
   reason: string;
 };
 
+/** Raw headcount at a position vs. how many bodies the league's slots require —
+ *  independent of `Need`, which grades the same position on lineup quality. A
+ *  position can be headcount-"good" and quality-"kritisch" at once: six
+ *  linemen, none of them startable, is a true statement about both. */
+export type RosterDepth = {
+  pos: string;
+  count: number;
+  needed: number;
+  spare: number;
+  tier: "good" | "ok" | "bad";
+  label: string;
+};
+
 export type LineupSlot = {
   slot: string;
   accepts?: string[];

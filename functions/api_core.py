@@ -742,6 +742,45 @@ def roster_needs(my_players, roster_positions, levels):
         starter_requirements(roster_positions))
 
 
+# Headcount vs. what the league actually requires - not startable quality.
+# "Bin ich hier dünn" and "wie viele Körper habe ich hier" are different
+# questions on this page: the needs cards already answer the first in terms of
+# lineup impact, this answers the second in terms a manager can eyeball the
+# roster with, so it deliberately does not read from the same field.
+DEPTH_TIERS = {
+    "bad":  "Zu wenig Spieler für die Startplätze",
+    "ok":   "Genau gedeckt, kein Polster",
+    "good": "Ausreichend Polster",
+}
+
+
+def roster_depth_overview(my_players, roster_positions, levels, league_positions):
+    """One line per position the league starts: bodies owned vs. bodies needed.
+
+    `spare` is headcount above demand, not startable-quality headcount - a
+    roster with six DL, none of them any good, is a headcount "good" and a
+    lineup-need "kritisch" at the same time, and both are true statements about
+    different questions.
+    """
+    demand = lineup.position_demand(roster_positions,
+                                    starter_requirements(roster_positions))
+    out = []
+    for pos in sorted(league_positions):
+        need = demand.get(pos, 0)
+        eligible = sum(1 for p in my_players if pos in p["elig"])
+        spare = eligible - need
+        tier = "bad" if spare < 0 else "ok" if spare == 0 else "good"
+        out.append({
+            "pos": pos,
+            "count": eligible,
+            "needed": need,
+            "spare": spare,
+            "tier": tier,
+            "label": DEPTH_TIERS[tier],
+        })
+    return out
+
+
 def _start_value(player):
     """What a player is worth to *this week's* lineup.
 
@@ -1307,11 +1346,13 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     needs = roster_needs(my_players_stats, roster_positions, levels)
     need_by_pos = {n["pos"]: n for n in needs}
 
-    my_players_stats.sort(key=lambda p: (p["protected"] is not None, p["pts"]))
-
     # ---- Available players ----------------------------------------------
     # Anyone whose eligibility touches a slot this league actually starts.
     league_positions = set(lineup.positions_in_use(roster_positions))
+    roster_depth = roster_depth_overview(my_players_stats, roster_positions,
+                                         levels, league_positions)
+
+    my_players_stats.sort(key=lambda p: (p["protected"] is not None, p["pts"]))
 
     available = []
     for pid, p in players.items():
@@ -1368,6 +1409,7 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
             for rec in recommendations
         ],
         "roster_needs": needs,
+        "roster_depth": roster_depth,
         "lineup": {
             "slots": [{"slot": s["slot"], "player": _strip_one(s["player"])}
                       for s in lineup_now["slots"]],
