@@ -23,7 +23,7 @@ type DraftPlayer = {
   injury?: Injury | null;
 };
 
-type Need = { pos: string; severity: number; reason: string };
+type Need = { pos: string; severity: number; label?: string; reason: string };
 
 type Recommendation = {
   type: "bpa" | "fit" | "trade";
@@ -289,7 +289,7 @@ function DraftAssistantContent() {
                         NEED_BADGES[need.severity] ?? NEED_BADGES[1]
                       }`}
                     >
-                      {NEED_LABELS[need.severity] ?? "Hinweis"}
+                      {need.label ?? NEED_LABELS[need.severity] ?? "Hinweis"}
                     </span>
                   </div>
                   <p className="text-sm text-gray-300">{need.reason}</p>

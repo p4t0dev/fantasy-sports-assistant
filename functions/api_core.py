@@ -835,6 +835,77 @@ def drop_protection(player, dvs, pts, sig, levels):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Positional accounting for moves
+#
+# Every cross-position comparison in here goes through a replacement level.
+# Raw DVS is not comparable across positions: in an IDP league the defensive
+# back pool is deep and scores high, so "194 beats 118" recommended a fourth
+# tight end over a starting running back purely because tight ends and backs
+# are graded on different curves. Measured against what the league can freely
+# replace at each position, the same two numbers usually say the opposite.
+# ---------------------------------------------------------------------------
+
+def _dvs_edge(player, levels):
+    """Dynasty value above what this league replaces the position with."""
+    level = (levels or {}).get(player["pos"], {})
+    return (player.get("dvs") or 0) - (level.get("dvs") or 0)
+
+
+def _reserve_value(player, levels):
+    """How strongly a player claims one of his position's reserve spots.
+
+    The better of what he gives the lineup now and what he is worth going
+    forward, each divided by his own position's replacement level so the two
+    are on one scale. A 30 year old back coming off an injury is neither, and
+    loses his spot to the younger body behind him - which is the whole reason
+    the reserve is not simply a projection ranking.
+    """
+    level = (levels or {}).get(player["pos"], {})
+    pts_ref, dvs_ref = level.get("pts") or 0, level.get("dvs") or 0
+    now = (player.get("pts") or 0) / pts_ref if pts_ref > 0 else 0
+    later = (player.get("dvs") or 0) / dvs_ref if dvs_ref > 0 else 0
+    return max(now, later)
+
+
+# Positions in one of these states are short of real starters, not merely
+# without a spare. A position you are already short at keeps one body more than
+# it strictly has to field: giving one away there is the move a manager objects
+# to on sight, and "he was only my RB3" is no answer when the roster has no RB2
+# worth starting either.
+SHORT_KINDS = {"empty", "below_level", "flex_gap"}
+
+
+def depth_reserves(roster, roster_positions, levels, needs=None):
+    """Players a position cannot spare, as {player id: positions he covers}.
+
+    For each position, the best `demand` bodies eligible there - the ones that
+    have to exist for the position to keep filling its own slots and its share
+    of the flex - plus one more where the position is already short. This is the
+    guard that was missing entirely: the engine offered a benched RB2 for a
+    third-string tight end at a roster whose one running back slot plus flex
+    needs two bodies, because nothing in the depth path ever asked what the
+    position looked like after the drop.
+
+    Reserved is not the same as untouchable. A reserved player may still be
+    traded in for someone at *his own* position - that is an upgrade, not a
+    hole - which is what the position set in the value is for.
+    """
+    demand = lineup.position_demand(roster_positions,
+                                    starter_requirements(roster_positions))
+    short = {n["pos"] for n in (needs or []) if n.get("kind") in SHORT_KINDS}
+
+    reserved = {}
+    for pos, need in demand.items():
+        keep = need + 1 if pos in short else need
+        eligible = sorted((p for p in roster if pos in p["elig"]),
+                          key=lambda p: (-_reserve_value(p, levels),
+                                         -(p.get("pts") or 0), p["id"]))
+        for p in eligible[:keep]:
+            reserved.setdefault(p["id"], set()).add(pos)
+    return reserved
+
+
 # One position should not soak up the whole waiver budget, not even through
 # balance-neutral upgrades.
 def _lineup_value(players, roster_positions):
@@ -858,9 +929,11 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
     roster = list(my_players)
     used_targets, used_drops = set(), set()
     moves = []
-    # Positions with an uncovered starting slot: never pay for an add by
-    # thinning one of these, unless the add lands at the same position.
-    critical = {n["pos"] for n in (needs or []) if n["severity"] >= 3}
+    # Never pay for an add by thinning a position below the bodies it needs,
+    # unless the add lands at that same position. Severity used to gate this and
+    # only at severity 3, which let every position the lineup override had
+    # capped at 1 - the thin ones a manager complains about - be raided freely.
+    reserved = depth_reserves(roster, roster_positions, levels, needs)
 
     # Best few per position is plenty; scanning every waiver player would cost
     # a matching each without changing the answer.
@@ -909,7 +982,8 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
             for loss, drop in losses[:8]:
                 if gain - loss <= min_gain:
                     continue
-                if drop["pos"] in critical and drop["pos"] != target["pos"]:
+                blocked = reserved.get(drop["id"], set())
+                if blocked and not (blocked & target["elig"]):
                     continue
                 candidate = [p for p in roster if p["id"] != drop["id"]] + [target]
                 delta = _lineup_value(candidate, roster_positions) - base
@@ -922,6 +996,7 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
         roster = [p for p in roster if p["id"] != drop["id"]] + [target]
         used_targets.add(target["id"])
         used_drops.add(drop["id"])
+        reserved = depth_reserves(roster, roster_positions, levels, needs)
 
         why = [f"Verbessert deine Startaufstellung um {round(delta, 1)} Punkte "
                f"({target['pos']} rein, {drop['pos']} raus)."]
@@ -945,7 +1020,8 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
 
     if len(moves) < max_moves:
         moves.extend(_depth_moves(roster, pool, roster_positions, used_targets,
-                                  used_drops, max_moves - len(moves), levels))
+                                  used_drops, max_moves - len(moves), levels,
+                                  needs))
     return moves
 
 
@@ -953,24 +1029,57 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
 # and the honest answer to "which claim improves my lineup" is then "none". That
 # is correct and useless: the actual question at that point is which end-of-bench
 # body is worth less than what is sitting on waivers.
-DEPTH_MOVE_MARGIN = 1.25
+#
+# How much dynasty value a stash has to add, measured above each position's own
+# replacement level, before it is worth a roster spot and a claim.
+DEPTH_MOVE_MIN_EDGE = 25.0
+# One recommendation set should not empty a position. Twice from a position the
+# roster is comfortable at is already generous; a flagged position gives up one
+# body at most, which is what stopped the board offering two of a manager's six
+# defensive linemen while telling him he was thin at DL.
+DEPTH_DROPS_PER_POS = 2
+DEPTH_DROPS_PER_NEED_POS = 1
+# Five claims that all land at the same position is a plan for one position, not
+# for a roster.
+DEPTH_ADDS_PER_POS = 2
+# A stash at a position the roster is actually short of is worth more than the
+# same edge somewhere it is already covered. Only from severity 2 up: in a deep
+# league almost every position comes back at 1, so bonusing that tier is a
+# constant - it moved nothing and it made every card claim the position was a
+# problem.
+DEPTH_NEED_BONUS = 25.0
+DEPTH_NEED_MIN_SEVERITY = 2
 
 
 def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit,
-                 levels=None):
-    """Bench upgrades: swap the least valuable droppable player for a clearly
+                 levels=None, needs=None):
+    """Bench upgrades: swap the least valuable expendable player for a clearly
     better asset, when no move improves the starting lineup at all.
 
-    Two constraints keep this from turning into vandalism:
+    Constraints that keep this from turning into vandalism:
 
     - a player who still projects above his position's replacement level is off
       limits, however flat the dynasty age curve has made him. Without this the
       engine offered Alvin Kamara for a rookie edge rusher, purely on DVS.
+    - a player his position still needs as a body cannot be dropped for someone
+      at a different position. This is the fix for the run of moves that offered
+      an RB2 for a third tight end and two of six defensive linemen for two more
+      defensive backs, on a roster flagged thin at both RB and DL.
+    - value is compared above each position's replacement level, never raw, so
+      deep and shallow position pools are on one scale.
     - a player added by an earlier move in the same sequence cannot be the drop
       in a later one, which it happily did - adding a man and dropping him two
       moves later.
     """
     moves = []
+    severity = {n["pos"]: n["severity"] for n in (needs or [])}
+    drops_per_pos, adds_per_pos = {}, {}
+    # A sequence that adds a tight end for a lineman and then a lineman for a
+    # tight end has recommended two claims to arrive back where it started. Once
+    # a position has been reinforced in this set it stops being a source, and
+    # once it has given someone up it stops being a destination. Like-for-like
+    # swaps are exempt: those are upgrades at one position, not a shuffle.
+    reinforced, thinned = set(), set()
     # Frozen once, deliberately. Recomputing it per move let each accepted add
     # push a real starter onto the bench and make him droppable on the next
     # pass: two tight ends in, and the engine offered up a starting running back.
@@ -979,6 +1088,8 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
                           if p is not None}
 
     while len(moves) < limit:
+        reserved = depth_reserves(roster, roster_positions, levels, needs)
+
         droppable = []
         for p in roster:
             if p["id"] in protected_starters or p["id"] in used_drops:
@@ -988,29 +1099,60 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
             replacement = (levels or {}).get(p["pos"], {}).get("pts", 0)
             if (p.get("pts") or 0) >= replacement:
                 continue
+            cap = (DEPTH_DROPS_PER_NEED_POS if severity.get(p["pos"], 0)
+                   else DEPTH_DROPS_PER_POS)
+            if drops_per_pos.get(p["pos"], 0) >= cap:
+                continue
             droppable.append(p)
         if not droppable:
             break
-        drop = min(droppable, key=lambda p: p["dvs"])
 
-        # A stash still has to be a player. Sleeper projects nothing at all for
-        # someone who is on no depth chart, and no dynasty upside justifies
-        # spending a roster spot on a zero.
-        candidates = [t for t in pool
-                      if t["id"] not in used_targets
-                      and (t.get("pts") or 0) > 0
-                      and t["dvs"] > drop["dvs"] * DEPTH_MOVE_MARGIN]
-        if not candidates:
+        # Worst first, but only as a search order - the pairing decides, because
+        # the cheapest man to lose is not always the one with a legal upgrade.
+        droppable.sort(key=lambda p: _dvs_edge(p, levels))
+
+        best = None
+        for drop in droppable[:8]:
+            blocked = reserved.get(drop["id"], set())
+            drop_edge = _dvs_edge(drop, levels)
+            for target in pool:
+                if target["id"] in used_targets:
+                    continue
+                # A stash still has to be a player. Sleeper projects nothing at
+                # all for someone who is on no depth chart, and no dynasty
+                # upside justifies spending a roster spot on a zero.
+                if not (target.get("pts") or 0) > 0:
+                    continue
+                if adds_per_pos.get(target["pos"], 0) >= DEPTH_ADDS_PER_POS:
+                    continue
+                if target["pos"] != drop["pos"] and (
+                        drop["pos"] in reinforced or target["pos"] in thinned):
+                    continue
+                # His position still needs him: only a like-for-like upgrade.
+                if blocked and not (blocked & target["elig"]):
+                    continue
+                edge = _dvs_edge(target, levels) - drop_edge
+                if edge < DEPTH_MOVE_MIN_EDGE:
+                    continue
+                short = max(0, severity.get(target["pos"], 0)
+                            - DEPTH_NEED_MIN_SEVERITY + 1)
+                rank = edge + DEPTH_NEED_BONUS * short
+                if best is None or rank > best[0]:
+                    best = (rank, edge, target, drop)
+        if not best:
             break
-        target = max(candidates, key=lambda t: t["dvs"])
 
+        _, edge, target, drop = best
         roster = [p for p in roster if p["id"] != drop["id"]] + [target]
         used_targets.add(target["id"])
         used_drops.add(drop["id"])
+        adds_per_pos[target["pos"]] = adds_per_pos.get(target["pos"], 0) + 1
+        drops_per_pos[drop["pos"]] = drops_per_pos.get(drop["pos"], 0) + 1
+        if target["pos"] != drop["pos"]:
+            reinforced.add(target["pos"])
+            thinned.add(drop["pos"])
 
-        why = [f"Kein Zugang verbessert aktuell deine Startelf. Kadertiefe: "
-               f"{target['name']} hat den deutlich höheren Dynasty-Wert "
-               f"({target['dvs']} statt {drop['dvs']})."]
+        why = [_depth_reason(target, drop, edge, severity, levels)]
         why.extend(target.get("signals", [])[:2])
 
         moves.append({
@@ -1024,11 +1166,43 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
                 "pos_out": drop["pos"],
                 "lineup_gain": 0.0,
                 "dvs_gain": round(target["dvs"] - drop["dvs"], 1),
+                "edge_gain": round(edge, 1),
                 "starts": False,
                 "empty_slots": [],
             },
         })
     return moves
+
+
+def _signed(value):
+    return f"{value:+.0f}"
+
+
+def _depth_reason(target, drop, edge, severity, levels):
+    """Say what the move is, in the terms it was actually decided in.
+
+    The old text quoted two raw DVS numbers side by side, which is exactly the
+    comparison that was wrong: across positions "194 statt 118" reads as an
+    argument for a move nobody would make. What the engine weighs is each
+    player's distance from his *own* position's replacement level, so that is
+    what it reports - and it says DVS, because these are dynasty-value units and
+    calling them Punkte invited them to be read as projected scoring.
+    """
+    lead = "Kein Zugang verbessert aktuell deine Startelf."
+    t_edge, d_edge = _dvs_edge(target, levels), _dvs_edge(drop, levels)
+
+    if drop["pos"] == target["pos"]:
+        body = (f"Kadertiefe {target['pos']}: {target['name']} liegt "
+                f"{_signed(t_edge)} DVS zum {target['pos']}-Ersatzniveau, "
+                f"{drop['name']} {_signed(d_edge)}.")
+    else:
+        body = (f"Kadertiefe: {target['name']} liegt {_signed(t_edge)} DVS zum "
+                f"{target['pos']}-Ersatzniveau, {drop['name']} {_signed(d_edge)} "
+                f"zum {drop['pos']}-Ersatzniveau — und {drop['pos']} bleibt auch "
+                f"ohne ihn gedeckt.")
+    if severity.get(target["pos"], 0) >= DEPTH_NEED_MIN_SEVERITY:
+        body += f" {target['pos']} ist auf deinem Roster eine offene Baustelle."
+    return f"{lead} {body}"
 
 
 def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None):

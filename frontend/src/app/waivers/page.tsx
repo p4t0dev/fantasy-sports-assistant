@@ -17,6 +17,10 @@ type Balance = {
   pos_out: string | null;
   lineup_gain: number;
   dvs_gain?: number;
+  /** Dynasty gap measured above each position's replacement level — the number
+   *  the depth engine actually decides on. Raw DVS is not comparable across
+   *  positions. */
+  edge_gain?: number;
   starts: boolean;
   empty_slots: string[];
 };
@@ -44,6 +48,10 @@ const SEVERITY_STYLES: Record<number, string> = {
   1: "border-l-yellow-500 bg-yellow-900/10",
 };
 
+// Fallback only. The backend names the situation (`need.label`), because
+// "Dünn" on four positions in four different states is what made this view
+// unreadable: one has an empty slot, one is covered below league level, one
+// has nobody for the flex, one is covered with only weak cover behind it.
 const SEVERITY_LABELS: Record<number, string> = { 3: "Kritisch", 2: "Ungesichert", 1: "Dünn" };
 
 const SLOT_LABELS: Record<string, string> = {
@@ -322,7 +330,7 @@ function WaiversContent() {
 
       {needs.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {needs.slice(0, 4).map((need) => (
+          {needs.map((need) => (
             <div
               key={need.pos}
               className={`glass-panel p-4 border-l-4 ${SEVERITY_STYLES[need.severity] ?? SEVERITY_STYLES[1]}`}
@@ -330,12 +338,13 @@ function WaiversContent() {
               <div className="flex justify-between items-center mb-1">
                 <span className="font-bold text-white text-lg">{need.pos}</span>
                 <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase bg-black/30 text-gray-300">
-                  {SEVERITY_LABELS[need.severity] ?? "Hinweis"}
+                  {need.label ?? SEVERITY_LABELS[need.severity] ?? "Hinweis"}
                 </span>
               </div>
               <p className="text-xs text-gray-300 leading-snug">{need.reason}</p>
               <p className="text-[10px] text-gray-500 mt-1">
-                {need.startable}/{need.depth} startbar · {need.fixed_slots} feste Slots
+                {need.startable}/{need.slots} auf Startniveau · {need.depth} im Kader ·{" "}
+                {need.fixed_slots} feste Slots
               </p>
             </div>
           ))}
@@ -386,8 +395,10 @@ function WaiversContent() {
                   </p>
                 ) : (
                   <p className="text-xs text-gray-400">
-                    Dynasty-Wert{" "}
-                    <span className="text-green-400 font-medium">+{rec.balance.dvs_gain}</span>
+                    Wert über Ersatzniveau{" "}
+                    <span className="text-green-400 font-medium">
+                      +{rec.balance.edge_gain ?? rec.balance.dvs_gain}
+                    </span>
                     <span className="text-gray-500"> · verändert die Startelf nicht</span>
                   </p>
                 )}
