@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { Player, Need, Faab, LineupSlot } from "@/lib/types";
+import type { Player, Need, Faab, LineupSlot, RosterDepth } from "@/lib/types";
 import {
   InjuryBadge,
   TrendBadge,
@@ -37,6 +37,7 @@ type WaiverData = {
     balance: Balance;
   }[];
   roster_needs: Need[];
+  roster_depth: RosterDepth[];
   lineup: { slots: LineupSlot[]; bench: Player[]; total: number; empty: string[] };
   positions: string[];
   faab: { budget: number | null; left: number | null; waiver_type: number | null };
@@ -72,6 +73,29 @@ const SORTS = [
 ] as const;
 
 type SortId = (typeof SORTS)[number]["id"];
+
+// Headcount vs. league demand at a position — deliberately separate from the
+// severity colors above (red/orange/yellow), which grade lineup quality. Six
+// bench-only linemen reads "good" here and "kritisch" there at once, and both
+// are correct; sharing one color scale would have hidden that distinction.
+const DEPTH_TONES: Record<RosterDepth["tier"], string> = {
+  good: "bg-green-900/30 text-green-300 border-green-700",
+  ok: "bg-yellow-900/30 text-yellow-300 border-yellow-700",
+  bad: "bg-red-900/30 text-red-300 border-red-700",
+};
+
+function DepthPill({ depth }: { depth: RosterDepth }) {
+  return (
+    <span
+      title={depth.label}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border whitespace-nowrap ${DEPTH_TONES[depth.tier]}`}
+    >
+      {depth.pos}
+      <span className="font-bold">{depth.count}</span>
+      <span className="opacity-60">/ {depth.needed} benötigt</span>
+    </span>
+  );
+}
 
 function FaabPill({ faab }: { faab?: Faab | null }) {
   if (!faab) return null;
@@ -284,6 +308,7 @@ function WaiversContent() {
   const recommendations = data?.smart_recommendations ?? [];
   const lineup = data?.lineup;
   const faab = data?.faab;
+  const rosterDepth = data?.roster_depth ?? [];
 
   return (
     <div className="space-y-8">
@@ -467,6 +492,14 @@ function WaiversContent() {
               {showTeam ? "Einklappen" : "Ausklappen"}
             </button>
           </div>
+
+          {rosterDepth.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {rosterDepth.map((d) => (
+                <DepthPill key={d.pos} depth={d} />
+              ))}
+            </div>
+          )}
 
           {showTeam && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
