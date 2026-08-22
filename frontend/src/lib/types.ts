@@ -56,13 +56,22 @@ export type Faab = { min: number; max: number; tier: string; budget_left: number
 
 export type Need = {
   pos: string;
+  /** How loud: 3 critical, 2 unsecured, 1 worth watching. */
   severity: number;
+  /** Which situation this is. Two positions at the same severity are usually
+   *  not the same problem, and the badge shows this rather than the severity. */
+  kind?: "empty" | "below_level" | "flex_gap" | "no_depth" | "no_backup" | "upgrade";
+  label?: string;
   gain: number;
   ratio: number;
+  /** Bodies the position has to be able to field, flex share included. */
   slots: number;
   fixed_slots: number;
   depth: number;
   startable: number;
+  /** startable - slots, and eligible - slots: room before a drop hurts. */
+  surplus?: number;
+  spare?: number;
   reason: string;
 };
 
