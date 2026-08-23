@@ -36,6 +36,10 @@ def show_waivers(username, league_id, sport):
         print("  Kein akuter Bedarf erkannt.")
 
     print("\n--- EMPFOHLENE MOVES ---")
+    # True for the whole section, so it is printed once rather than opening
+    # every recommendation.
+    if result.get("moves_note"):
+        print(f"  {result['moves_note']}\n")
     for rec in result["smart_recommendations"]:
         bid = rec["faab"]
         bid_str = f"  ({bid['min']}-{bid['max']} FAAB, {bid['tier']})" if bid else ""
@@ -83,13 +87,17 @@ def show_draft(username, draft_id, sport, position=None):
     print("\n--- BEST AVAILABLE ---")
     board = result["best_available"]
     if position:
-        board = [p for p in board if p["pos"] == position.upper()]
+        # By eligibility, not by primary position: Sleeper lists SG first for
+        # almost nobody, so `--position SG` used to hide every SG-eligible wing.
+        wanted = position.upper()
+        board = [p for p in board if wanted in (p.get("elig") or [p["pos"]])]
         if not board:
-            print(f"  Keine verfügbaren Spieler auf Position {position.upper()}.")
+            print(f"  Keine verfügbaren Spieler auf Position {wanted}.")
     for p in board:
         rookie = " [ROOKIE]" if p["is_rookie"] else ""
-        print(f"  DVS {p['dvs']:<8} {p['name']:<24} {p['pos']:<3} {p['team']:<4} "
-              f"Age {p['age']}{rookie}{_fmt_signals(p['signals'])}")
+        elig = "/".join(p.get("elig") or [p["pos"]])
+        print(f"  Edge {p['edge']:<8} DVS {p['dvs']:<8} {p['name']:<24} {elig:<10} "
+              f"{p['team']:<4} Age {p['age']}{rookie}{_fmt_signals(p['signals'])}")
     return 0
 
 

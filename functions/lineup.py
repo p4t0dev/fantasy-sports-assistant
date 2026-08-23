@@ -79,10 +79,98 @@ def build_lineup(players, roster_positions, value_of):
                 return True
         return False
 
+    open_slots = len(slots)
     for player in sorted(players, key=lambda p: -value_of(p)):
-        place(player, set())
+        # Every successful placement fills exactly one more slot, and the greedy
+        # runs in descending value - once nothing is free, no later player can
+        # raise the total. Without this the league-wide matching in
+        # `marginal_starters` walked an augmenting path for every one of a few
+        # thousand players against an already full board.
+        if not open_slots:
+            break
+        if place(player, set()):
+            open_slots -= 1
 
     return list(zip(slots, assigned))
+
+
+def marginal_starters(players, roster_positions, num_teams, value_of,
+                      pool_factor=3, min_pool=300):
+    """Per position: the weakest player who still gets a starting slot in this
+    league, measured on the whole league at once.
+
+    Ranking each position on its own - "the 25th best SG in a league with 2.1
+    SG slots per team" - treats every position as a closed pool. It is not. A
+    league with G, F and UTIL slots lets one player count against three or four
+    positions, so each pool is several times larger than the slots behind it
+    and the bar lands far above the real one: on a 12-team NBA league the
+    per-position rule put the shooting guard baseline at a top-25 NBA guard,
+    which left an obvious starter reading as below league level.
+
+    So the bar is read off the assignment instead: fill this league's *complete*
+    set of starting slots (`roster_positions` x teams) with the best players
+    there are, then take, per position, the weakest player who still got a seat
+    he is eligible for. Multi-position eligibility is priced exactly once, by
+    the matching itself.
+
+    The matching runs on *buckets*, not on individual seats. A 32-team IDP
+    league has 704 starting slots and under two thousand candidates, and
+    augmenting over every seat took eighteen seconds; slots that accept the
+    same positions are interchangeable, and so are players with the same
+    eligibility, so the graph collapses to a handful of nodes on each side
+    without changing which players end up placed.
+    """
+    slots = starting_slots(roster_positions)
+    if not slots or not players:
+        return {}
+
+    teams = max(1, int(num_teams or 1))
+    capacity = {}
+    for slot in slots:
+        key = frozenset(slot_accepts(slot))
+        capacity[key] = capacity.get(key, 0) + teams
+
+    accepts = list(capacity)
+    cap = [capacity[key] for key in accepts]
+    used = [0] * len(accepts)
+    # Per bucket: how many players of each eligibility signature sit in it, so
+    # an augmenting path knows who it may move on.
+    occupants = [{} for _ in accepts]
+    free = sum(cap)
+
+    def place(elig, visited):
+        for i, seats in enumerate(accepts):
+            if i in visited or not (elig & seats):
+                continue
+            visited.add(i)
+            if used[i] < cap[i]:
+                used[i] += 1
+                occupants[i][elig] = occupants[i].get(elig, 0) + 1
+                return True
+            for sig, count in list(occupants[i].items()):
+                if count and place(sig, visited):
+                    occupants[i][sig] = count - 1
+                    occupants[i][elig] = occupants[i].get(elig, 0) + 1
+                    return True
+        return False
+
+    # A player ranked this far down cannot reach a starting slot, and dragging
+    # the full player database through the matching buys nothing.
+    ranked = sorted(players, key=lambda p: -value_of(p))
+    ranked = ranked[:max(min_pool, len(slots) * teams * pool_factor)]
+
+    # Values only fall as we go, so the last write per position is its minimum.
+    bars = {}
+    for player in ranked:
+        if not free:
+            break
+        if not place(frozenset(player["elig"]), set()):
+            continue
+        free -= 1
+        value = value_of(player)
+        for pos in player["elig"]:
+            bars[pos] = value
+    return bars
 
 
 def lineup_value(lineup, value_of):
@@ -158,6 +246,17 @@ NEED_KINDS = {
     "upgrade":     "Ausbaufähig",
 }
 
+# Kinds whose badge claims a hole in the *starting lineup*. When `gain` says a
+# league-average starter would not improve that lineup, the claim is about the
+# bench instead and the badge has to say so: "FLEX offen" over a lineup with no
+# empty seat and nothing to gain is the line that made this whole view read as
+# broken, however carefully the sentence underneath it explained itself.
+LINEUP_KINDS = {"below_level", "flex_gap"}
+COVERED_LABEL = "Nur Kadertiefe"
+
+# How many names to carry per position so the count can be checked by eye.
+NEED_SAMPLE = 4
+
 
 def _need_kind(empty, startable, own, demand, spare):
     if empty:
@@ -226,6 +325,7 @@ def positional_needs(players, roster_positions, replacement, value_of, slots_per
         kind, depth_severity = _need_kind(empty, stat["startable"], stat["fixed"],
                                           stat["demand"], stat["spare"])
         severity = max(gain_severity, depth_severity)
+        covered = not empty and gain_severity == 0
 
         # The decisive check, and the one that was missing: `gain` is the direct
         # measurement of whether this position can still be improved. When a
@@ -233,17 +333,26 @@ def positional_needs(players, roster_positions, replacement, value_of, slots_per
         # lineup is covered here — whatever a headcount of the bench says. That
         # combination was reporting "kritisch" on positions with gain 0.0, which
         # is why every position on a normal roster came back red.
-        if not empty and gain_severity == 0:
+        if covered:
             severity = min(severity, 1)
 
         if not severity:
             continue
 
+        # The headcount is the half of this card nobody believes on sight -
+        # "1 von 9 SG-fähigen Spielern über Liga-Startniveau" invites the
+        # question which nine, and against what. Ship both: the bar in the
+        # league's own points, and the names it was applied to.
+        sample = sorted((p for p in players if pos in p["elig"]),
+                        key=value_of, reverse=True)[:NEED_SAMPLE]
+
         needs.append({
             "pos": pos,
             "severity": severity,
             "kind": kind,
-            "label": NEED_KINDS[kind],
+            "label": (COVERED_LABEL if covered and kind in LINEUP_KINDS
+                      else NEED_KINDS[kind]),
+            "covered": covered,
             "empty_slots": empty,
             "gain": round(gain, 1),
             "ratio": round(ratio, 2),
@@ -253,6 +362,10 @@ def positional_needs(players, roster_positions, replacement, value_of, slots_per
             "surplus": stat["surplus"],
             "spare": stat["spare"],
             "fixed_slots": stat["fixed"],
+            "replacement": round(baseline, 1),
+            "top": [{"name": p.get("name"), "value": round(value_of(p), 1),
+                     "startable": value_of(p) >= baseline}
+                    for p in sample],
             "reason": _reason(pos, kind, stat, empty, gain_severity),
         })
 
@@ -282,7 +395,8 @@ def _reason(pos, kind, stat, empty=0, gain_severity=0):
     """
     startable, eligible = stat["startable"], stat["eligible"]
     detail = (f"{startable} von {eligible} {pos}-fähigen Spielern über "
-              f"Liga-Startniveau, {_slot_text(stat['fixed'], stat['demand'])}")
+              f"Liga-Startniveau ({stat['replacement']:.0f} Proj-Punkte), "
+              f"{_slot_text(stat['fixed'], stat['demand'])}")
 
     if kind == "empty":
         # An unfilled slot and a slot filled below league level are different

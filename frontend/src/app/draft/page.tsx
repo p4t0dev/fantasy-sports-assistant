@@ -1,32 +1,45 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
+import type { Need } from "@/lib/types";
+import { PosBadge } from "@/components/PlayerBadges";
+import NeedCard from "@/components/NeedCard";
+import { PosFilter, SortBar, sortBy, type SortOption } from "@/components/Controls";
 
 type Injury = { status: string | null; severity: number; label: string | null };
 
 type DraftPlayer = {
   id: string;
   name: string;
+  /** Primary fantasy position — what Sleeper lists first, nothing more. */
   pos: string;
+  /** Every position a league slot would accept him at. This is the key the
+   *  filter uses: Sleeper lists SG first for almost nobody, so filtering by
+   *  `pos` answered "SG" with two names on a board full of SG-eligible wings. */
+  elig?: string[];
   team: string;
   age: number | string;
   status?: string;
   rvs: number;
   dvs: number;
   pts: number;
+  /** Dynasty value above what this league can freely replace the position
+   *  with — the only cross-position comparable number on the board. */
+  edge: number;
+  edge_pos?: string;
+  pts_edge: number;
+  replacement: number;
   trade_value: number;
   is_rookie: boolean;
   signals?: string[];
   injury?: Injury | null;
 };
 
-type Need = { pos: string; severity: number; label?: string; reason: string };
-
 type Recommendation = {
-  type: "bpa" | "fit" | "trade";
+  type: "bpa" | "fit" | "now" | "trade";
   title: string;
   player: DraftPlayer;
   reason: string;
@@ -46,31 +59,43 @@ type DraftData = {
   roster_needs: Need[];
   top_recommendations: Recommendation[];
   best_available: DraftPlayer[];
+  positions: string[];
 };
 
-const NEED_STYLES: Record<number, string> = {
-  3: "border-l-red-500 bg-red-900/10",
-  2: "border-l-orange-500 bg-orange-900/10",
-  1: "border-l-yellow-500 bg-yellow-900/10",
-};
-const NEED_BADGES: Record<number, string> = {
-  3: "bg-red-500/20 text-red-400",
-  2: "bg-orange-500/20 text-orange-400",
-  1: "bg-yellow-500/20 text-yellow-400",
-};
-const NEED_LABELS: Record<number, string> = { 3: "Kritisch", 2: "Ungesichert", 1: "Dünn" };
-
-const REC_ICONS: Record<string, string> = { bpa: "🥇", fit: "🎯", trade: "💰" };
+const REC_ICONS: Record<string, string> = { bpa: "🥇", fit: "🎯", now: "⚡", trade: "💰" };
 const REC_COLORS: Record<string, string> = {
   bpa: "border-yellow-500/50 bg-yellow-900/10",
   fit: "border-green-500/50 bg-green-900/10",
+  now: "border-sky-500/50 bg-sky-900/10",
   trade: "border-blue-500/50 bg-blue-900/10",
+};
+
+// Each card ranks on its own number, so each card shows its own number.
+const REC_METRIC: Record<
+  Recommendation["type"],
+  (p: DraftPlayer) => { label: string; value: number; signed?: boolean }
+> = {
+  bpa: (p) => ({ label: "Edge", value: p.edge, signed: true }),
+  fit: (p) => ({ label: "Edge", value: p.edge, signed: true }),
+  now: (p) => ({ label: "Proj-Edge", value: p.pts_edge, signed: true }),
+  trade: (p) => ({ label: "Trade Value", value: p.trade_value }),
 };
 
 const PLAYER_TYPE_LABELS: Record<number, string> = {
   1: "Rookie Only",
   2: "Nur Veteranen",
 };
+
+// Same controls as the waiver board, because it is the same question asked of a
+// different pool. "Edge" leads: raw DVS is not comparable across positions, so
+// ranking the board on it put the deepest position on top by construction.
+const BOARD_SORTS: readonly SortOption<DraftPlayer>[] = [
+  { id: "edge", label: "Dynasty-Edge", of: (p) => p.edge },
+  { id: "dvs", label: "DVS", of: (p) => p.dvs },
+  { id: "pts", label: "Projektion", of: (p) => p.pts },
+  { id: "rvs", label: "RVS", of: (p) => p.rvs },
+  { id: "trade", label: "Trade Value", of: (p) => p.trade_value },
+];
 
 function strategyHint(sport: string, isRookieDraft?: boolean): string {
   if (sport === "nba") {
@@ -81,6 +106,14 @@ function strategyHint(sport: string, isRookieDraft?: boolean): string {
   return isRookieDraft
     ? "In Rookie-Drafts zählt Talent (DVS) mehr als kurzfristiger Bedarf. Elite-WRs haben die längste Haltbarkeit, RBs sind riskanter, liefern aber sofort."
     : "Baue um Elite-QBs und junge WRs. RBs lassen sich in späteren Runden nachholen.";
+}
+
+function eligOf(player: DraftPlayer): string[] {
+  return player.elig?.length ? player.elig : [player.pos];
+}
+
+function signed(value: number): string {
+  return value >= 0 ? `+${Math.round(value)}` : `${Math.round(value)}`;
 }
 
 function DraftAssistantContent() {
@@ -94,6 +127,8 @@ function DraftAssistantContent() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
+  const [posFilter, setPosFilter] = useState<string | null>(null);
+  const [sortId, setSortId] = useState("edge");
 
   // State is only written after the await, so the effect never triggers a
   // synchronous cascading render.
@@ -126,6 +161,33 @@ function DraftAssistantContent() {
       active = false;
     };
   }, [username, draftId, sport, reloadToken]);
+
+  const needs = useMemo(() => data?.roster_needs ?? [], [data]);
+  const bestAvailable = useMemo(() => data?.best_available ?? [], [data]);
+
+  const severityByPos = useMemo(
+    () => new Map(needs.map((n) => [n.pos, n.severity])),
+    [needs]
+  );
+
+  const positions = useMemo(() => {
+    const fromLeague = data?.positions ?? [];
+    const fromBoard = [...new Set(bestAvailable.flatMap(eligOf))];
+    const all = fromLeague.length ? fromLeague : fromBoard;
+    return [...all].sort(
+      (a, b) => (severityByPos.get(b) ?? 0) - (severityByPos.get(a) ?? 0) || a.localeCompare(b)
+    );
+  }, [data, bestAvailable, severityByPos]);
+
+  const countAt = (pos: string) =>
+    bestAvailable.filter((p) => eligOf(p).includes(pos)).length;
+
+  const visibleBoard = useMemo(() => {
+    const list = posFilter
+      ? bestAvailable.filter((p) => eligOf(p).includes(posFilter))
+      : bestAvailable;
+    return sortBy(list, BOARD_SORTS, sortId);
+  }, [bestAvailable, posFilter, sortId]);
 
   const refresh = () => {
     setRefreshing(true);
@@ -164,9 +226,7 @@ function DraftAssistantContent() {
 
   const metadata = data?.metadata;
   const lastPick = data?.last_pick;
-  const needs = data?.roster_needs ?? [];
   const recommendations = data?.top_recommendations ?? [];
-  const bestAvailable = data?.best_available ?? [];
   const typeLabel = metadata ? PLAYER_TYPE_LABELS[metadata.player_type] : undefined;
 
   return (
@@ -218,22 +278,28 @@ function DraftAssistantContent() {
 
       {recommendations.length > 0 && (
         <div className="space-y-4 mb-8">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="w-2 h-8 bg-yellow-500 rounded-full"></div>
             <h2 className="text-xl font-bold text-white">Top-Empfehlungen</h2>
+            <span className="text-sm text-gray-500">
+              Vier Fragen, vier Antworten — Value, Bedarf, Sofortnutzen, Marktwert
+            </span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
             {recommendations.map((rec, idx) => (
               <div
                 key={idx}
-                className={`glass-panel p-6 border-t-4 ${REC_COLORS[rec.type]} transition-transform hover:-translate-y-1`}
+                className={`glass-panel p-5 border-t-4 ${REC_COLORS[rec.type]} flex flex-col gap-3 transition-transform hover:-translate-y-1`}
               >
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2">
                   <span className="text-2xl">{REC_ICONS[rec.type]}</span>
-                  <h3 className="text-lg font-bold text-white">{rec.title}</h3>
+                  <h3 className="text-base font-bold text-white leading-tight">{rec.title}</h3>
                 </div>
-                <div className="mb-4">
-                  <div className="text-xl font-bold text-white flex items-center gap-2 flex-wrap">
+                <div>
+                  <div className="text-lg font-bold text-white flex items-center gap-2 flex-wrap">
+                    {eligOf(rec.player).map((pos) => (
+                      <PosBadge key={pos} pos={pos} />
+                    ))}
                     {rec.player.name}
                     {rec.player.is_rookie && (
                       <span className="text-[10px] bg-yellow-600/30 text-yellow-400 px-1.5 py-0.5 rounded uppercase font-bold">
@@ -242,20 +308,39 @@ function DraftAssistantContent() {
                     )}
                   </div>
                   <div className="text-sm text-gray-400">
-                    {rec.player.pos} • {rec.player.team} • Age {rec.player.age}
+                    {rec.player.team} • Age {rec.player.age}
                   </div>
                 </div>
-                <div className="flex items-center gap-4 mb-4 text-sm">
+                {/* The middle column is always the number this card was
+                    ranked on. Showing the dynasty edge under "Bester
+                    Sofort-Starter" put a large negative next to a pick that
+                    was chosen on projected points. */}
+                <div className="grid grid-cols-3 gap-2 text-sm">
                   <div>
-                    <span className="text-gray-500">DVS</span>
-                    <div className="font-bold text-blue-400">{rec.player.dvs}</div>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider block">DVS</span>
+                    <span className="font-bold text-blue-400">{rec.player.dvs}</span>
                   </div>
+                  {(() => {
+                    const metric = REC_METRIC[rec.type](rec.player);
+                    return (
+                      <div>
+                        <span className="text-[10px] text-gray-300 uppercase tracking-wider block font-semibold">
+                          {metric.label}
+                        </span>
+                        <span
+                          className={`font-bold ${metric.value >= 0 ? "text-green-400" : "text-gray-400"}`}
+                        >
+                          {metric.signed ? signed(metric.value) : metric.value}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <div>
-                    <span className="text-gray-500">Trade Value</span>
-                    <div className="font-bold text-purple-400">{rec.player.trade_value}</div>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider block">Proj</span>
+                    <span className="font-bold text-purple-400">{rec.player.pts}</span>
                   </div>
                 </div>
-                <p className="text-sm text-gray-300 bg-gray-900/50 p-3 rounded border border-gray-700">
+                <p className="text-xs text-gray-300 bg-gray-900/50 p-3 rounded border border-gray-700 leading-relaxed mt-auto">
                   {rec.reason}
                 </p>
               </div>
@@ -277,23 +362,8 @@ function DraftAssistantContent() {
             </div>
           ) : (
             <div className="space-y-3">
-              {needs.map((need, idx) => (
-                <div
-                  key={idx}
-                  className={`glass-panel p-4 border-l-4 ${NEED_STYLES[need.severity] ?? NEED_STYLES[1]}`}
-                >
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="font-bold text-white text-lg">{need.pos}</span>
-                    <span
-                      className={`text-xs px-2 py-1 rounded font-bold uppercase ${
-                        NEED_BADGES[need.severity] ?? NEED_BADGES[1]
-                      }`}
-                    >
-                      {need.label ?? NEED_LABELS[need.severity] ?? "Hinweis"}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-300">{need.reason}</p>
-                </div>
+              {needs.map((need) => (
+                <NeedCard key={need.pos} need={need} />
               ))}
             </div>
           )}
@@ -305,48 +375,73 @@ function DraftAssistantContent() {
         </div>
 
         <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="w-2 h-8 bg-green-500 rounded-full"></div>
             <h2 className="text-xl font-bold text-white">Best Available</h2>
+            <span className="text-sm text-gray-500">
+              {visibleBoard.length} von {bestAvailable.length}
+            </span>
           </div>
+
+          <SortBar options={BOARD_SORTS} active={sortId} onPick={setSortId} />
+
+          <PosFilter
+            positions={positions}
+            counts={countAt}
+            active={posFilter}
+            onPick={setPosFilter}
+            tone="bg-green-600 text-white border-green-500"
+            severityByPos={severityByPos}
+            needs={needs}
+          />
 
           <div className="glass-panel overflow-hidden">
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-800">
                 <thead className="bg-gray-900/50">
                   <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                       Spieler
                     </th>
-                    <th scope="col" className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
                       Status
                     </th>
-                    <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-blue-300 uppercase tracking-wider" title="Saisonprognose in der Wertung dieser Liga">
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-right text-xs font-medium text-green-300 uppercase tracking-wider"
+                      title="DVS über dem Ersatzniveau seiner besten Position — der einzige positionsübergreifend vergleichbare Wert"
+                    >
+                      Edge
+                    </th>
+                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-blue-300 uppercase tracking-wider" title="Saisonprognose in der Wertung dieser Liga">
                       Proj
                     </th>
-                    <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-blue-400 uppercase tracking-wider" title="Dynasty Value Score">
+                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-blue-400 uppercase tracking-wider" title="Dynasty Value Score">
                       DVS
                     </th>
-                    <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-purple-400 uppercase tracking-wider" title="Redraft Value Score">
+                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-purple-400 uppercase tracking-wider" title="Redraft Value Score">
                       RVS
                     </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800 bg-transparent">
-                  {bestAvailable.map((player) => {
-                    const isNeeded = needs.some((n) => n.pos === player.pos);
+                  {visibleBoard.map((player) => {
+                    const elig = eligOf(player);
+                    const isNeeded = needs.some((n) => elig.includes(n.pos));
                     const severity = player.injury?.severity ?? 0;
                     return (
                       <tr
                         key={player.id}
                         className={`transition-colors hover:bg-gray-800/50 ${isNeeded ? "bg-green-900/10" : ""}`}
                       >
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center">
-                            <div className="flex-shrink-0 h-10 w-10 flex items-center justify-center bg-gray-800 rounded-full border border-gray-700">
-                              <span className="text-sm font-bold text-gray-300">{player.pos}</span>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex items-center gap-3">
+                            <div className="flex flex-col gap-1 items-start w-14 shrink-0">
+                              {elig.map((pos) => (
+                                <PosBadge key={pos} pos={pos} className="w-full" />
+                              ))}
                             </div>
-                            <div className="ml-4">
+                            <div>
                               <div className="text-sm font-medium text-white flex items-center gap-2">
                                 {player.name}
                                 {isNeeded && (
@@ -364,7 +459,7 @@ function DraftAssistantContent() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                        <td className="px-4 py-3 whitespace-nowrap text-center">
                           <span
                             title={player.injury?.label ?? undefined}
                             className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -378,18 +473,33 @@ function DraftAssistantContent() {
                             {player.injury?.status || player.status || "Active"}
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-blue-300">
+                        <td
+                          className={`px-4 py-3 whitespace-nowrap text-right text-sm font-bold ${
+                            player.edge >= 0 ? "text-green-400" : "text-gray-500"
+                          }`}
+                          title={`${player.edge_pos ?? player.pos}-Ersatzniveau: ${player.replacement} DVS`}
+                        >
+                          {signed(player.edge)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-blue-300">
                           {player.pts}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-white">
+                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-white">
                           {player.dvs}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-400">
+                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-gray-400">
                           {player.rvs}
                         </td>
                       </tr>
                     );
                   })}
+                  {visibleBoard.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                        Kein verfügbarer Spieler auf dieser Position.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

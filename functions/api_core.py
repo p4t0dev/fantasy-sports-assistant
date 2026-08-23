@@ -666,28 +666,55 @@ def starter_requirements(roster_positions):
     return req
 
 
+LEVEL_METRICS = ("dvs", "rvs", "pts")
+
+
 def replacement_levels(rosters, players, stats, college_data, sigs, req, num_teams,
-                       sport="nfl", fallback_pool=True, projs=None):
+                       sport="nfl", fallback_pool=True, projs=None,
+                       roster_positions=None):
     """League-relative baseline per position: the value of the last player who
     would still be starting somewhere in this league.
 
-    Players are counted at every position they are eligible for, and each metric
-    is ranked independently - reading an RVS off a DVS-sorted list produced an
-    arbitrary number.
+    That sentence is now implemented literally, by filling the league's whole
+    set of starting slots and reading the bar off the assignment
+    (`lineup.marginal_starters`). It used to be approximated per position, as
+    "the (slots x teams)-th best player eligible here" - which is only the same
+    thing when eligibility is exclusive. It is not in a league with G/F/UTIL
+    slots, where one player counts against three or four positions at once:
+    every pool came out several times larger than the slots behind it, and the
+    bar with it. On a 12-team NBA league that put the SG baseline at a top-25
+    NBA guard, so a roster with an obvious starter at the position reported one
+    startable shooting guard out of nine.
+
+    The per-position ranking is kept as the fallback for positions the
+    assignment cannot speak about - a position with no slot in this league has
+    no marginal starter, and a zero there would make every player at it read as
+    above replacement.
     """
+    pool = []
+    seen = set()
+
+    def collect(pid, player):
+        p_stats = stats.get(str(pid), {})
+        sig = sigs.get(str(pid))
+        proj = (projs or {}).get(str(pid))
+        return {
+            "elig": lineup.player_positions(player),
+            "dvs": calculate_dvs(player, p_stats, college_data, sig, proj),
+            "rvs": calculate_rvs(player, p_stats, sig, proj),
+            "pts": expected_points(player, p_stats, sig, proj),
+        }
+
     by_pos = {}
     for roster in rosters or []:
         for pid in (roster.get("players") or []):
             player = players.get(str(pid))
-            if not player:
+            if not player or str(pid) in seen:
                 continue
-            p_stats = stats.get(str(pid), {})
-            sig = sigs.get(str(pid))
-            proj = (projs or {}).get(str(pid))
-            entry = (calculate_dvs(player, p_stats, college_data, sig, proj),
-                     calculate_rvs(player, p_stats, sig, proj),
-                     expected_points(player, p_stats, sig, proj))
-            for pos in lineup.player_positions(player):
+            seen.add(str(pid))
+            entry = collect(pid, player)
+            pool.append(entry)
+            for pos in entry["elig"]:
                 by_pos.setdefault(pos, []).append(entry)
 
     # During a live startup draft Sleeper leaves the rosters empty, so there is
@@ -702,17 +729,14 @@ def replacement_levels(rosters, players, stats, college_data, sigs, req, num_tea
         if thin:
             thin_set = set(thin)
             for pid, player in players.items():
-                if not is_rosterable(player, sport):
+                if str(pid) in seen or not is_rosterable(player, sport):
                     continue
                 positions = lineup.player_positions(player) & thin_set
                 if not positions:
                     continue
-                p_stats = stats.get(str(pid), {})
-                sig = sigs.get(str(pid))
-                proj = (projs or {}).get(str(pid))
-                entry = (calculate_dvs(player, p_stats, college_data, sig, proj),
-                         calculate_rvs(player, p_stats, sig, proj),
-                         expected_points(player, p_stats, sig, proj))
+                seen.add(str(pid))
+                entry = collect(pid, player)
+                pool.append(entry)
                 for pos in positions:
                     by_pos.setdefault(pos, []).append(entry)
 
@@ -721,10 +745,21 @@ def replacement_levels(rosters, players, stats, college_data, sigs, req, num_tea
         starters = max(1, int(round(req.get(pos, 1) * max(1, num_teams))))
         idx = min(len(values) - 1, starters - 1)
         levels[pos] = {
-            "dvs": sorted(values, key=lambda v: -v[0])[idx][0],
-            "rvs": sorted(values, key=lambda v: -v[1])[idx][1],
-            "pts": sorted(values, key=lambda v: -v[2])[idx][2],
+            metric: sorted(values, key=lambda v: -v[metric])[idx][metric]
+            for metric in LEVEL_METRICS
         }
+
+    for metric in LEVEL_METRICS:
+        bars = lineup.marginal_starters(pool, roster_positions, num_teams,
+                                        lambda p, m=metric: p[m])
+        for pos, value in bars.items():
+            levels.setdefault(pos, {})[metric] = value
+
+    # A position the assignment reached on one metric but not another would be
+    # left half-filled, and every reader of `levels` does `.get(metric, 0)`.
+    for level in levels.values():
+        for metric in LEVEL_METRICS:
+            level.setdefault(metric, 0)
     return levels
 
 
@@ -889,6 +924,23 @@ def _dvs_edge(player, levels):
     """Dynasty value above what this league replaces the position with."""
     level = (levels or {}).get(player["pos"], {})
     return (player.get("dvs") or 0) - (level.get("dvs") or 0)
+
+
+def _best_edge(value, positions, levels, metric):
+    """Value above replacement at the position that suits this player best.
+
+    A player eligible at three positions will only ever occupy the one where he
+    is worth the most, so that is where his edge is read. Keying off
+    `canonical_pos` graded a forward against the centre baseline purely because
+    Sleeper happens to list C first in his `fantasy_positions`.
+    """
+    best, best_pos = None, None
+    for pos in positions or []:
+        bar = ((levels or {}).get(pos) or {}).get(metric) or 0
+        edge = (value or 0) - bar
+        if best is None or edge > best:
+            best, best_pos = edge, pos
+    return round(best or 0, 1), best_pos
 
 
 def _reserve_value(player, levels):
@@ -1217,6 +1269,16 @@ def _signed(value):
     return f"{value:+.0f}"
 
 
+# Every depth move rests on the same precondition, so every depth move used to
+# repeat it: five cards in a row opening with "Kein Zugang verbessert aktuell
+# deine Startelf." The sentence is true once, for the whole section, and is
+# shipped that way - see `moves_note` on the waiver response.
+DEPTH_MOVES_NOTE = ("Kein Zugang verbessert aktuell deine Startelf. Die folgenden "
+                    "Moves zielen deshalb auf Kadertiefe: das schwächste Asset, "
+                    "das weder startet noch über Ersatzniveau liegt, gegen das "
+                    "beste verfügbare.")
+
+
 def _depth_reason(target, drop, edge, severity, levels):
     """Say what the move is, in the terms it was actually decided in.
 
@@ -1227,7 +1289,6 @@ def _depth_reason(target, drop, edge, severity, levels):
     what it reports - and it says DVS, because these are dynasty-value units and
     calling them Punkte invited them to be read as projected scoring.
     """
-    lead = "Kein Zugang verbessert aktuell deine Startelf."
     t_edge, d_edge = _dvs_edge(target, levels), _dvs_edge(drop, levels)
 
     if drop["pos"] == target["pos"]:
@@ -1241,7 +1302,7 @@ def _depth_reason(target, drop, edge, severity, levels):
                 f"ohne ihn gedeckt.")
     if severity.get(target["pos"], 0) >= DEPTH_NEED_MIN_SEVERITY:
         body += f" {target['pos']} ist auf deinem Roster eine offene Baustelle."
-    return f"{lead} {body}"
+    return body
 
 
 def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None):
@@ -1328,7 +1389,8 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
 
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
-                                signals_by_pid, req, num_teams, sport, projs=projs)
+                                signals_by_pid, req, num_teams, sport, projs=projs,
+                                roster_positions=roster_positions)
 
     # ---- My roster -------------------------------------------------------
     my_players_stats = []
@@ -1402,6 +1464,13 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     lineup_now = lineup.lineup_report(my_players_stats, roster_positions, _start_value)
 
     return {
+        "league": {"name": league_info.get("name"), "teams": num_teams,
+                   "season": league_info.get("season")},
+        # True for the whole section, so it is stated once above the cards
+        # instead of opening every one of them.
+        "moves_note": (DEPTH_MOVES_NOTE
+                       if recommendations and all(r["kind"] == "depth" for r in recommendations)
+                       else None),
         "drop_candidates": _strip(my_players_stats[:15]),
         "waiver_targets": _strip(sorted(board, key=lambda p: -p["score"])),
         "smart_recommendations": [
@@ -1527,7 +1596,8 @@ def optimize_lineup_api(username, league_id, sport="nfl"):
 
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
-                                signals_by_pid, req, num_teams, sport, projs=projs)
+                                signals_by_pid, req, num_teams, sport, projs=projs,
+                                roster_positions=roster_positions)
 
     squad = []
     for pid in my_player_ids:
@@ -1576,8 +1646,10 @@ def optimize_lineup_api(username, league_id, sport="nfl"):
     return {
         "league": {"name": league_info.get("name"), "teams": num_teams},
         "slots": slots,
-        "current": [{"slot": s["slot"], "player": _strip_one(s["player"])}
-                    for s in current],
+        # Not "current": the frontend's React compiler reads any `.current`
+        # property access as a ref and stops optimizing the component around it.
+        "current_slots": [{"slot": s["slot"], "player": _strip_one(s["player"])}
+                          for s in current],
         "current_total": current_total,
         "gain": round(report["total"] - current_total, 1),
         "changes": changes,
@@ -1697,6 +1769,133 @@ def get_user_drafts_api(username, sport="nfl", season="2026", seasons=None):
         })
     return result
 
+
+# How many players the draft board carries. Thirty was fine as one long list
+# and is not enough once the list can be filtered by position.
+DRAFT_BOARD_SIZE = 60
+DRAFT_BOARD_PER_POS = 10
+
+
+def _draft_board(available, league_positions):
+    """The best players overall, topped up so every position is worth filtering.
+
+    Two passes on purpose. The head of the board has to be honest - the best
+    picks, in order, whatever they play - so nothing is thinned out of it. But
+    a filter that answers "SG" with two names is worse than no filter, and on
+    an NBA board that is exactly what happens: Sleeper lists SG first for
+    almost nobody, so a per-primary-position quota starves the very position a
+    user goes looking for. The second pass therefore tops up by *eligibility*,
+    which is the same key the filter uses.
+    """
+    board = available[:DRAFT_BOARD_SIZE]
+    picked = {p["id"] for p in board}
+
+    for pos in sorted(league_positions):
+        have = sum(1 for p in board if pos in p["elig"])
+        if have >= DRAFT_BOARD_PER_POS:
+            continue
+        for p in available:
+            if have >= DRAFT_BOARD_PER_POS:
+                break
+            if p["id"] in picked or pos not in p["elig"]:
+                continue
+            picked.add(p["id"])
+            board.append(p)
+            have += 1
+
+    board.sort(key=lambda p: -p["edge"])
+    return board
+
+
+def _edge_phrase(edge, pos, bar, unit="DVS"):
+    """State a distance from replacement level in a direction that reads right.
+
+    Late in a draft almost everything left is below the bar, and "-232 DVS über
+    Ersatzniveau" is not a sentence.
+    """
+    if edge >= 0:
+        return f"{_signed(edge)} {unit} über dem {pos}-Ersatzniveau ({bar:.0f})"
+    return (f"{abs(edge):.0f} {unit} unter dem {pos}-Ersatzniveau ({bar:.0f}) — "
+            f"mehr gibt das Board auf der Position nicht mehr her")
+
+
+def _draft_recommendations(available, needs, levels):
+    """Four picks, four different questions - each answered by its own number.
+
+    The old set answered one question three times. "Best Player Available" and
+    "Best Trade Asset" both ranked raw DVS, so the second card was usually the
+    runner-up of the first; and "Best Team Fit" searched by `canonical_pos`,
+    which is only a player's *first* fantasy position, so on a roster short at
+    SG it skipped every SG-eligible forward on the board - Sleeper lists SG
+    first for almost nobody - and landed on a fringe name a thousand DVS below
+    it.
+
+    All four now read off the same board and never repeat a player:
+
+    - value, as dynasty edge over what the league replaces the position with
+    - need, the best dynasty value at the position with the loudest hole
+    - now, projected points over that position's starting bar this season
+    - market, the trade value the asset would fetch
+    """
+    if not available:
+        return []
+
+    recs = []
+    taken = set()
+
+    def add(kind, title, player, reason):
+        if not player or player["id"] in taken:
+            return
+        taken.add(player["id"])
+        recs.append({"type": kind, "title": title, "player": player,
+                     "reason": reason})
+
+    def first(seq):
+        return next((p for p in seq if p["id"] not in taken), None)
+
+    bpa = first(sorted(available, key=lambda p: -p["edge"]))
+    if bpa:
+        add("bpa", "Best Player Available", bpa,
+            f"Stärkstes Asset am Board: {bpa['dvs']} DVS, "
+            f"{_edge_phrase(bpa['edge'], bpa['edge_pos'], bpa['replacement'])}. "
+            f"Reiner Value-Pick, unabhängig von deinem Bedarf.")
+
+    # Needs arrive sorted by severity, so the first one the board can still
+    # serve is the loudest hole a pick could close.
+    for need in needs or []:
+        pos = need["pos"]
+        fit = first(sorted((p for p in available if pos in p["elig"]),
+                           key=lambda p: -p["dvs"]))
+        if not fit:
+            continue
+        bar = ((levels or {}).get(pos) or {}).get("dvs") or 0
+        # A position the lineup already covers is thin, not open. Calling it
+        # "deine lauteste Lücke" over a full starting lineup is the kind of
+        # overstatement that makes the whole card read as guesswork.
+        lead = "Deine dünnste Position ist" if need.get("covered") else "Deine lauteste Lücke ist"
+        add("fit", f"Bester {pos} für deinen Bedarf", fit,
+            f"{lead} {pos} — {need['label']}. "
+            f"{fit['name']} ist dort der beste verfügbare Spieler: "
+            f"{_edge_phrase(round(fit['dvs'] - bar, 1), pos, bar)}.")
+        break
+
+    now = first(sorted(available, key=lambda p: -p["pts_edge"]))
+    if now:
+        bar = ((levels or {}).get(now["edge_pos"]) or {}).get("pts") or 0
+        add("now", "Bester Sofort-Starter", now,
+            f"Größter Gewinn für die kommende Saison: {now['pts']} projizierte "
+            f"Punkte, "
+            f"{_edge_phrase(now['pts_edge'], now['edge_pos'], bar, 'Punkte')}.")
+
+    trade = first(sorted(available, key=lambda p: -p["trade_value"]))
+    if trade:
+        add("trade", "Best Trade Asset", trade,
+            f"Marktwert statt Startelf: Trade Value {trade['trade_value']} — "
+            f"{trade['name']} ist die Währung, mit der du später nachlegst.")
+
+    return recs
+
+
 def analyze_draft_api(username, draft_id, sport="nfl"):
     user = sleeper_api.get_user(username)
     if not user:
@@ -1756,7 +1955,8 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
 
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
-                                signals_by_pid, req, num_teams, sport, projs=projs)
+                                signals_by_pid, req, num_teams, sport, projs=projs,
+                                roster_positions=roster_positions)
 
     # During a startup draft Sleeper leaves the rosters empty until it finishes,
     # so the picks made so far are the only picture of the team. Combine both:
@@ -1827,10 +2027,15 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
         if pos == "RB" and age >= 27:
             trade_value *= 0.7
 
+        elig = sorted(lineup.player_positions(p) & league_positions)
+        dvs_edge, edge_pos = _best_edge(dvs, elig, levels, "dvs")
+        pts_edge, _ = _best_edge(pts, elig, levels, "pts")
+
         available.append({
             "id": pid,
             "name": f"{p.get('first_name')} {p.get('last_name')}",
             "pos": pos,
+            "elig": elig,
             "team": p.get("team") or "FA",
             "age": age,
             "status": p.get("status") or "Active",
@@ -1838,45 +2043,25 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
             "dvs": dvs,
             "pts": pts,
             "proj": proj,
+            # Value above what this league can replace the position with. Raw
+            # DVS is not comparable across positions - in an IDP league the DB
+            # pool scores high across the board - so the board is ranked on the
+            # edge and the raw numbers stay visible next to it.
+            "edge": dvs_edge,
+            "edge_pos": edge_pos,
+            "pts_edge": pts_edge,
+            "replacement": round((levels.get(edge_pos) or {}).get("dvs") or 0, 1),
             "trade_value": round(trade_value, 1),
             "is_rookie": years_exp == 0,
             "signals": sig["labels"] if sig else [],
             "injury": sig["injury"] if sig else None,
         })
 
-    available.sort(key=lambda x: x["dvs"], reverse=True)
+    available.sort(key=lambda x: -x["edge"])
 
-    top_recs = []
-    if available:
-        bpa = available[0]
-        top_recs.append({
-            "type": "bpa",
-            "title": "Best Player Available",
-            "player": bpa,
-            "reason": f"{bpa['name']} ist der talentierteste Spieler am Board (DVS: {bpa['dvs']}). Reiner Value-Pick."
-        })
+    top_recs = _draft_recommendations(available, needs, levels)
 
-        if needs:
-            top_need_pos = needs[0]["pos"]
-            fit = next((p for p in available if p["pos"] == top_need_pos), None)
-            if fit:
-                top_recs.append({
-                    "type": "fit",
-                    "title": "Best Team Fit",
-                    "player": fit,
-                    "reason": f"Passt auf deine größte Lücke ({needs[0]['reason']}) — {fit['name']} ist der beste verfügbare {top_need_pos}."
-                })
-
-        rec_ids = [r["player"]["id"] for r in top_recs]
-        trade_sorted = sorted(available, key=lambda x: x["trade_value"], reverse=True)
-        trade_asset = next((p for p in trade_sorted if p["id"] not in rec_ids), None)
-        if trade_asset:
-            top_recs.append({
-                "type": "trade",
-                "title": "Best Trade Asset",
-                "player": trade_asset,
-                "reason": f"Hohe Marktnachfrage: {trade_asset['name']} hat einen Trade Value von {trade_asset['trade_value']} und lässt sich später weiterreichen."
-            })
+    board = _draft_board(available, league_positions)
 
     return {
         "metadata": {
@@ -1891,6 +2076,6 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
         "last_pick": last_pick,
         "roster_needs": needs,
         "top_recommendations": top_recs,
-        "best_available": available[:30],
+        "best_available": board,
         "positions": sorted(league_positions),
     }

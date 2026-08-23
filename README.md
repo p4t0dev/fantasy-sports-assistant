@@ -59,8 +59,25 @@ Additive und multiplikative Anteile sind bewusst getrennt: ein kurzfristiger
 Ausfall darf den Marktwert eines Spielers nicht skalieren.
 
 **Replacement Level** — je Position der Wert des letzten Spielers, der in dieser
-Liga noch irgendwo starten würde (`Teams × Starterplätze`-ter bester Spieler auf
-der Position). Erst dadurch wird ein DB mit einem WR vergleichbar.
+Liga noch irgendwo starten würde. Erst dadurch wird ein DB mit einem WR
+vergleichbar.
+
+Dieser Satz wird wörtlich gerechnet: die *komplette* Slot-Menge der Liga
+(`roster_positions × Teams`) wird mit den besten verfügbaren Spielern besetzt,
+und der Schwellwert einer Position ist der schwächste Spieler, der dort noch
+einen Platz bekommen hat. Vorher war es die Näherung „der (Slots × Teams)-te
+beste Spieler *dieser* Position“ — das stimmt nur, solange Positionen sich
+nicht überlappen. In einer Liga mit G-, F- und UTIL-Slots zählt ein Spieler auf
+drei oder vier Positionen gleichzeitig, jeder Pool ist damit ein Vielfaches der
+Slots dahinter, und der Schwellwert wandert mit. In einer 12er-NBA-Liga landete
+die SG-Latte so bei einem Top-25-Guard der gesamten NBA — ein Kader mit einem
+klaren Starter auf der Position meldete „1 von 9 über Liga-Startniveau“.
+
+Das Matching läuft auf *Slot-Typen*, nicht auf einzelnen Plätzen: eine
+32-Team-IDP-Liga hat 704 Startplätze, und Slots, die dieselben Positionen
+akzeptieren, sind untereinander austauschbar — genau wie Spieler mit derselben
+Eligibility. Der Graph fällt dadurch auf eine Handvoll Knoten pro Seite
+zusammen, ohne dass sich die Auswahl ändert (18 s → unter 1 s).
 
 **Bedarfsschwere** — zwei Signale, `gain` und `depth`. `gain` misst direkt, was
 ein Liga-Durchschnitts-Starter der Aufstellung hinzufügen würde; `depth` zählt
@@ -70,6 +87,13 @@ einer Ausnahme: **eine Position mit `gain == 0` und ohne leeren Slot kann nie
 machte die hohe Replacement-Schwelle einer tiefen Liga jeden normalen Kader
 flächendeckend rot — jede Position kritisch, auf einer Aufstellung ohne eine
 einzige Lücke.
+
+Greift die Ausnahme, ändert sich auch das Etikett: „FLEX offen“ über einer
+Aufstellung ohne freien Platz und ohne Gewinnpotenzial heißt jetzt **„Nur
+Kadertiefe“**. Und jede Bedarfskarte liefert die Zahlen mit, an denen sie hängt
+— den Schwellwert in Liga-Punkten und die Namen, die dagegen gezählt wurden. „1
+von 9 SG-fähigen Spielern über Liga-Startniveau“ ist ohne diese beiden Angaben
+nicht überprüfbar, und was man nicht überprüfen kann, glaubt man nicht.
 
 **Move-Planung** — Empfehlungen entstehen als *Sequenz*, nicht als Liste
 unabhängiger Ideen. Jeder akzeptierte Move schreibt den simulierten Kader fort,
@@ -84,7 +108,25 @@ Kann kein Zugang die Startelf verbessern — der Normalfall in einer tiefen Liga
 mit vollem Kader —, folgt eine zweite Stufe für **Kadertiefe**: der schwächste
 Spieler, der weder startet noch über Replacement Level liegt, gegen das beste
 verfügbare Asset. Diese Moves sind als `kind: "depth"` markiert und behaupten
-keinen Aufstellungsgewinn.
+keinen Aufstellungsgewinn. Ihre gemeinsame Voraussetzung steht **einmal** über
+dem Abschnitt (`moves_note`) statt als erster Satz jeder einzelnen Karte.
+
+## Draft-Board
+
+Das Board ist nach **Edge** sortiert — DVS über dem Ersatzniveau der Position,
+an der ein Spieler am meisten wert ist. Roher DVS ist positionsübergreifend
+nicht vergleichbar, ein Ranking darauf setzt also die tiefste Position nach oben.
+Vier Empfehlungen beantworten vier verschiedene Fragen, jede mit ihrer eigenen
+Kennzahl: Value (Edge), Bedarf (bester Spieler auf der lautesten Position),
+Sofortnutzen (Punkte über Startniveau) und Marktwert (Trade Value). Vorher
+rankten „Best Player Available“ und „Best Trade Asset“ beide rohen DVS und
+lieferten damit fast immer denselben Spieler zweimal.
+
+Gefiltert und gesucht wird über **`fantasy_positions`**, nicht über die primäre
+Position: Sleeper listet SG bei fast niemandem an erster Stelle, weshalb die
+Suche nach dem besten SG jeden SG-fähigen Flügelspieler übersprang und auf
+einem Namen tausend DVS weiter unten landete. Das Board wird zusätzlich pro
+Position aufgefüllt, damit ein Positionsfilter nicht zwei Namen zurückgibt.
 
 **Waiver-Score** — ein eigenes Ranking, nicht identisch mit DVS:
 
