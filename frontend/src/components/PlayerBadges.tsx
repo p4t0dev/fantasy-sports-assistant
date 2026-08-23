@@ -1,6 +1,7 @@
 "use client";
 
 import type { Player, Injury } from "@/lib/types";
+import { posTone, slotTone, slotLabel } from "@/lib/positions";
 
 // These badges are the "why" behind every number on the site. They used to live
 // inline in the waiver page and were duplicated, in a reduced form, in the
@@ -90,8 +91,51 @@ export function PointsPill({ player, label = "PROJ" }: { player: Player; label?:
 
 export function PosChip({ pos }: { pos: string }) {
   return (
-    <div className="w-10 h-10 shrink-0 rounded-full bg-gray-800 flex items-center justify-center font-bold text-gray-300 text-xs border border-gray-700">
+    <div
+      className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center font-bold text-xs border ${posTone(pos).chip}`}
+    >
       {pos}
+    </div>
+  );
+}
+
+/** The position, in front of the name, in the position's colour.
+
+    Used on every list that names players. A change list reading "Rein: Bijan
+    Robinson · Raus: Brock Bowers" asks the reader to remember what those two
+    play before the swap means anything. */
+export function PosBadge({ pos, className = "" }: { pos?: string | null; className?: string }) {
+  if (!pos) return null;
+  return (
+    <span
+      className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide border shrink-0 ${posTone(pos).chip} ${className}`}
+    >
+      {pos}
+    </span>
+  );
+}
+
+/** Every position a player may be slotted at, primary first. */
+export function EligBadges({ player }: { player: Player }) {
+  const positions = player.elig?.length ? player.elig : [player.pos];
+  return (
+    <span className="inline-flex flex-wrap gap-1 align-middle">
+      {positions.map((pos) => (
+        <PosBadge key={pos} pos={pos} />
+      ))}
+    </span>
+  );
+}
+
+/** A roster seat. Wider than a position badge because the label can read
+    "WR/RB FLEX", and coloured by the slot rather than by whoever sits in it. */
+export function SlotBadge({ slot, accepts }: { slot: string; accepts?: string[] }) {
+  return (
+    <div
+      title={accepts?.join(", ")}
+      className={`w-20 sm:w-24 shrink-0 text-center py-1 rounded-md text-[11px] font-bold border ${slotTone(slot).chip}`}
+    >
+      {slotLabel(slot)}
     </div>
   );
 }

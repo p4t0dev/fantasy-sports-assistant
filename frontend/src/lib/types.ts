@@ -72,6 +72,13 @@ export type Need = {
   /** startable - slots, and eligible - slots: room before a drop hurts. */
   surplus?: number;
   spare?: number;
+  /** No empty slot and nothing a league-average starter would add: the hole is
+   *  on the bench, not in the lineup. */
+  covered?: boolean;
+  /** The bar `startable` was counted against, in the league's own points. */
+  replacement?: number;
+  /** The best eligible players at this position, so the count can be checked. */
+  top?: { name: string; value: number; startable: boolean }[];
   reason: string;
 };
 
@@ -94,3 +101,5 @@ export type LineupSlot = {
   player: Player | null;
   alternatives?: Player[];
 };
+
+export type LeagueInfo = { name?: string | null; teams?: number; season?: string | null };
