@@ -21,6 +21,10 @@ Two shapes come back from the endpoint and have to be told apart:
 - NBA returns per-game averages (`gp: 1`, `pts: 31.8`)
 
 `season_factor` normalises both to a season total.
+
+Weekly projections (`fetch_week_projections`) answer a different question -
+who starts *this* week - and carry the schedule with them: opponents, game
+dates and bye weeks, none of which a season total can express.
 """
 
 import json
@@ -51,31 +55,71 @@ def season_factor(p_stats, sport="nfl"):
     return float(SEASON_GAMES.get(sport, 17))
 
 
-def fetch_season_projections(sport="nfl", season="2026"):
-    """Season projections keyed by player id. Returns {} on any failure —
-    projections are an improvement to the model, never a requirement for it."""
+def _fetch_rows(sport, path):
+    """Raw projection rows for one endpoint path, or None on any failure."""
     positions = POSITIONS.get(sport) or POSITIONS["nfl"]
     query = urllib.parse.urlencode(
         [("season_type", "regular")] + [("position[]", p) for p in positions]
     )
-    url = f"{BASE_URL}/{sport}/{season}?{query}"
+    url = f"{BASE_URL}/{sport}/{path}?{query}"
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=30) as response:
             rows = json.loads(response.read().decode())
     except Exception as e:
-        print(f"Projections fetch failed for {sport} {season}: {e}")
-        return {}
+        print(f"Projections fetch failed for {sport} {path}: {e}")
+        return None
 
-    if not isinstance(rows, list):
-        return {}
+    return rows if isinstance(rows, list) else None
 
+
+def fetch_season_projections(sport="nfl", season="2026"):
+    """Season projections keyed by player id. Returns {} on any failure —
+    projections are an improvement to the model, never a requirement for it."""
     out = {}
-    for row in rows:
+    for row in _fetch_rows(sport, season) or []:
         pid = row.get("player_id")
         stats = row.get("stats")
         if pid is None or not stats:
             continue
         out[str(pid)] = stats
     return out
+
+
+# Draft-market fields ride along on every row and make up most of its bytes.
+# Nothing in the weekly model reads them.
+_DROP_PREFIXES = ("adp_", "pos_adp_")
+
+
+def fetch_week_projections(sport, season, week):
+    """One week of projections: player stats, and the schedule behind them.
+
+    The schedule is the part a season projection cannot give. A team's week is
+    read off the `opponent` and `date` fields of its rows: a team with no row
+    carrying an opponent is on bye. Every team still ships rows in its bye week
+    - backups with empty stats - so "no rows" never happens and cannot be the
+    test.
+
+    Returns {"stats": {pid: stats}, "opp": {team: opponent}, "date": {team:
+    "YYYY-MM-DD"}}, or None when the fetch failed. An empty week (preseason,
+    or past the end of the schedule) comes back as empty dicts, not None.
+    """
+    rows = _fetch_rows(sport, f"{season}/{week}")
+    if rows is None:
+        return None
+
+    stats, opp, date = {}, {}, {}
+    for row in rows:
+        team = row.get("team")
+        if team and row.get("opponent"):
+            opp[team] = row["opponent"]
+            if row.get("date"):
+                date[team] = row["date"]
+        pid = row.get("player_id")
+        p_stats = row.get("stats")
+        if pid is None or not p_stats:
+            continue
+        stats[str(pid)] = {k: v for k, v in p_stats.items()
+                           if not k.startswith(_DROP_PREFIXES)}
+    return {"stats": stats, "opp": opp, "date": date}

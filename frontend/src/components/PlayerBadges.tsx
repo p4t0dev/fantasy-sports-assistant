@@ -79,6 +79,36 @@ export function SignalBadges({ player }: { player: Player }) {
   );
 }
 
+/** The number a lineup is built from: this week's projection in season, the
+ *  season projection when there is no weekly one. Never mixed - the backend
+ *  sends weekly numbers for every player or for none. */
+export function startPts(player: Player): number {
+  return player.pts_week ?? player.pts;
+}
+
+/** Who he plays this week - or why he will not play for you. */
+export function MatchupBadge({ player }: { player: Player }) {
+  if (player.locked) {
+    return (
+      <span
+        title="Sein Spiel ist vorbei — er kann weder rein noch raus."
+        className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border bg-gray-800 text-gray-400 border-gray-600"
+      >
+        🔒 gespielt
+      </span>
+    );
+  }
+  if (player.bye) {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border bg-red-900/40 text-red-300 border-red-700">
+        Bye
+      </span>
+    );
+  }
+  if (!player.opp) return null;
+  return <span className="text-[10px] text-gray-500 font-medium">vs {player.opp}</span>;
+}
+
 /** Projected season points — the number the lineup is actually built from. */
 export function PointsPill({ player, label = "PROJ" }: { player: Player; label?: string }) {
   return (

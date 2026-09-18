@@ -17,12 +17,14 @@ Functions rufen sie beide auf — es gibt keine zweite Kopie mehr.
 ### Module
 
 - `functions/sleeper_api.py` — dünne Wrapper um die Sleeper-REST-API
-- `functions/projections.py` — Saisonprognosen (forward-looking Produktionsterm)
+- `functions/projections.py` — Saison- und Wochenprognosen (forward-looking
+  Produktionsterm, Spielplan, Bye-Wochen)
 - `functions/signals.py` — Signal-Layer: Verletzungsstatus, Depth-Chart-Chancen,
   Trending-Adds/Drops, Liga-Transaktionen
 - `functions/api_core.py` — Datenschicht, Scoring-Modell (RVS/DVS), Waiver- und
   Draft-Analyse
-- `functions/main.py` — HTTP-Endpunkte + täglicher Datenrefresh
+- `functions/lineup.py` — Slot-Zuordnung (optimale Aufstellung) und Bedarfsanalyse
+- `functions/main.py` — HTTP-Endpunkte + Datenrefresh dreimal täglich
 
 ## Bewertungsmodell
 
@@ -45,6 +47,41 @@ Das ist die Währung der Aufstellung. RVS skaliert QBs runter und TEs hoch, dami
 Die Aufstellung über RVS zu bauen hieß, dass ein TE mit 150 projizierten Punkten
 einen RB mit 170 verdrängt und ein 333-Punkte-QB seinen SUPER_FLEX-Platz an
 einen 292-Punkte-RB verliert.
+
+**Wochenpunkte (`pts_week`)** — die Prognose für *diese* Woche, im Scoring der
+Liga. Während der Saison ist das die Währung der Aufstellung, nicht `pts`: eine
+Aufstellung wird für ein Spiel gesetzt, und nach Saisonpunkten gerankt startete
+ein Spieler im Bye vor einem gesunden. Gegner und Bye-Wochen kommen aus
+denselben Wochenzeilen — ein Team, dessen Zeilen keinen Gegner tragen, hat
+Bye (Backups mit leeren Stats haben nie einen, daher zählt „irgendeine Zeile
+mit Gegner“, nicht „irgendeine Zeile“). `Out`/IR ergibt 0, `Doubtful` wird
+abgeschlagen, `Questionable` **nicht**: die meisten spielen, und ob dieser
+spielt, steht vor dem Kickoff fest. Der 20-%-Saisonabschlag bänkte Joe Burrow
+für Tyler Shough; jetzt ist `Questionable` ein Hinweis im Aufstellungs-Check.
+
+**Gesperrte Spieler** — ist das Spiel eines Spielers vorbei (Spieldatum vor
+heute, US-Zeit), bleibt er, wo er ist: ein Starter behält Platz und Punkte, ein
+Bankspieler kann nicht mehr rein. Optimiert wird nur der Rest. Eine
+Verletzungsmeldung nach seinem Spiel betrifft die kommenden Wochen, nicht
+diese.
+
+**Horizont (`pts_horizon`)** — Summe über diese und die nächsten vier Wochen
+(`WEEK_HORIZON`), inklusive Bye-Wochen. Grundlage für die Waiver-Bewertung im
+nächsten Schritt.
+
+**Historie** — die Saison in Arbeit belegt keinen Recency-Platz, sondern geht
+als Tempo (Punkte pro Spiel × 17) mit dem Anteil einer Saison ein, den der
+Spieler gespielt hat. Vorher nahm sie den obersten Platz ein — als
+Saison*summe*: eine Woche nach Saisonstart stand ein Ein-Spiel-Wert mit
+Gewicht 1.0 neben vollen Saisons und halbierte die Historie aller, die gespielt
+hatten (Drake Maye 294.8 → 150.8), während Verletzte ihren vollen Wert
+behielten. Ohne abgeschlossene Saison (Rookies) zählt, was bisher tatsächlich
+erzielt wurde — ein starkes Spiel hochgerechnet wäre eine Monstersaison.
+
+**Kicker und DEF** werden wie bei Sleeper als Skalarprodukt aus Stat- und
+Scoring-Keys gewertet, jede Position nur über ihre eigenen Keys. Beide liefen
+vorher durch den Offense-Scorer, der kein `fgm_*` und kein `pts_allow_*` kennt
+— jeder Kicker stand bei 0.0.
 
 **RVS (Redraft Value Score)** — Wert für die *laufende* Saison.
 Produktion × Positionsnormalisierung × Rolle × Team × kurzfristige Verfügbarkeit.
@@ -110,6 +147,28 @@ Spieler, der weder startet noch über Replacement Level liegt, gegen das beste
 verfügbare Asset. Diese Moves sind als `kind: "depth"` markiert und behaupten
 keinen Aufstellungsgewinn. Ihre gemeinsame Voraussetzung steht **einmal** über
 dem Abschnitt (`moves_note`) statt als erster Satz jeder einzelnen Karte.
+
+## Wochenübersicht
+
+`/overview` zeigt den **Aufstellungs-Check über alle Ligen** der laufenden
+Saison: pro Liga die aktuelle Aufstellung gegen die beste noch mögliche, und
+was daran nicht stimmt — leere Slots, Starter mit Bye oder `Out` (Stufe 3),
+`Doubtful` oder ≥ 5 Punkte auf der Bank (Stufe 2), `Questionable` oder
+1.5–5 Punkte (Stufe 1). Best-Ball-Ligen werden übersprungen, dort stellt
+Sleeper selbst auf.
+
+Rein/Raus werden zuerst im selben Slot gepaart — Kicker gegen Kicker — und erst
+danach über Positionen hinweg. Nach Wert allein gepaart las sich ein
+Kicker-Tausch als „starte den 7-Punkte-Kicker statt des 14-Punkte-RB“.
+
+Die Übersicht ist ein **Snapshot**, nie eine Live-Berechnung: alle Ligen durch
+das volle Modell dauern für einen Seitenaufruf zu lange, und die Antwort ändert
+sich nur mit neuen Prognosen und Meldungen. `refresh_data` baut sie um 06:00,
+12:00 und 18:00 (Europe/Berlin) für jeden Username in `FSA_SNAPSHOT_USERS` neu;
+`get_overview` liefert nur, was gespeichert ist. Gelesen wird direkt aus Cloud
+Storage statt über `load_json`, das eine Datei einmal pro Container zieht und
+danach die lokale Kopie ausliefert — für einen Snapshot, der dreimal am Tag in
+einem anderen Container entsteht, hieße das: veraltet bis zum Neustart.
 
 ## Draft-Board
 
@@ -180,7 +239,18 @@ functions/venv/bin/python assistant.py --username DEIN_NAME --draft_id <DRAFT_ID
 ```
 
 ```bash
+functions/venv/bin/python assistant.py --username DEIN_NAME --overview
+```
+
+```bash
 functions/venv/bin/python assistant.py --update --sport nfl
+```
+
+Lokal gegen den Functions-Emulator (die Frontend-Fallback-URL zeigt auf
+`demo-no-project`):
+
+```bash
+firebase emulators:start --only functions --project demo-no-project
 ```
 
 ## Deployment
@@ -203,12 +273,13 @@ benötigen den Blaze-Plan.
 
 ### Zugriffskontrolle
 
-Die Endpunkte sind öffentlich erreichbar. Zwei Umgebungsvariablen begrenzen das:
+Die Endpunkte sind öffentlich erreichbar. Drei Umgebungsvariablen begrenzen das:
 
 | Variable | Wirkung |
 |---|---|
 | `FSA_ALLOWED_ORIGINS` | Komma-Liste erlaubter Origins für CORS. Ohne Wert: `*` |
 | `FSA_REFRESH_TOKEN` | Shared Secret für `update_data`. **Ohne Wert bleibt der Endpunkt geschlossen** (503) |
+| `FSA_SNAPSHOT_USERS` | Komma-Liste von Sleeper-Usernames, deren Wochenübersicht berechnet wird. Ohne Wert gibt es keine Übersicht |
 
 `update_data` lädt bei jedem Aufruf die komplette Spielerdatenbank plus bis zu 25
 ESPN-Requests — ungeschützt ist das eine offene Kostenquelle. Der Endpunkt ist
@@ -222,7 +293,13 @@ Secret setzen (Secret Manager):
 firebase functions:secrets:set FSA_REFRESH_TOKEN
 ```
 
-`FSA_ALLOWED_ORIGINS` steht in `functions/.env`. Diese Datei ist **gitignored** —
+`FSA_SNAPSHOT_USERS` ist Opt-in per Konfiguration statt „beim ersten Aufruf“:
+eine Übersicht rechnet jede Liga eines Users durchs volle Modell, und ein
+öffentlicher Endpunkt, der das für jeden übergebenen Namen täte, wäre dieselbe
+offene Kostenquelle. Der Button „Daten aktualisieren“ baut die Übersichten nach
+dem Refresh ebenfalls neu.
+
+`FSA_ALLOWED_ORIGINS` und `FSA_SNAPSHOT_USERS` stehen in `functions/.env`. Diese Datei ist **gitignored** —
 nach einem frischen Clone muss sie aus `functions/.env.example` neu angelegt
 werden, sonst fällt die API stillschweigend auf `*` zurück.
 
@@ -232,11 +309,12 @@ ihn in `localStorage` dieses Browsers ab.
 
 ## Daten
 
-`players.json`, `stats_*.json`, `projections_*.json` und `college_stats.json`
-sind bewusst **nicht** eingecheckt (players.json allein ist 16 MB). Sie werden
-erzeugt durch:
+`players.json`, `stats_*.json`, `projections_*.json` (Saison und Wochenfenster),
+`college_stats.json` und die Übersichten `overview_*.json` sind bewusst **nicht**
+eingecheckt (players.json allein ist 16 MB). Sie werden erzeugt durch:
 
-- die geplante Function `refresh_data` (täglich 06:00 Europe/Berlin), oder
+- die geplante Function `refresh_data` (NFL um 06:00, 12:00 und 18:00, NBA um
+  06:00, Europe/Berlin), oder
 - den Button „Daten aktualisieren“, oder
 - `assistant.py --update`
 

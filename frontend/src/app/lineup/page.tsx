@@ -4,29 +4,27 @@ import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { Player, LineupSlot, Injury } from "@/lib/types";
+import type { Player, LineupSlot, Injury, LineupChange } from "@/lib/types";
 import {
   InjuryBadge,
   SignalBadges,
   PosBadge,
   EligBadges,
   SlotBadge,
+  MatchupBadge,
+  startPts,
 } from "@/components/PlayerBadges";
 import { slotLabel } from "@/lib/positions";
 
-type Change = {
-  slot: string | null;
-  in: Player;
-  out: Player | null;
-};
-
 type LineupData = {
   league: { name: string; teams: number };
+  /** The week being set, or null off-season (season projections then). */
+  week: number | null;
   slots: LineupSlot[];
   current_slots: { slot: string; player: Player | null }[];
   current_total: number;
   gain: number;
-  changes: Change[];
+  changes: LineupChange[];
   bench: Player[];
   total: number;
   empty: string[];
@@ -51,6 +49,7 @@ function SeatRow({
   movesTo,
   incoming,
   backup,
+  unit,
 }: {
   slot: string;
   accepts?: string[];
@@ -62,6 +61,8 @@ function SeatRow({
   /** The optimal occupant is not currently starting anywhere. */
   incoming: boolean;
   backup?: string;
+  /** Label under the points: the week ("W2"), or "Proj" off-season. */
+  unit: string;
 }) {
   return (
     <div
@@ -89,15 +90,16 @@ function SeatRow({
                 {optimal.name}
                 <InjuryBadge injury={optimal.injury} />
               </div>
-              <div className="text-xs text-gray-500">
-                {optimal.team} • Age {optimal.age}
+              <div className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
+                <span>{optimal.team} • Age {optimal.age}</span>
+                <MatchupBadge player={optimal} />
                 {backup && <span className="text-gray-600"> · Backup: {backup}</span>}
               </div>
               <SignalBadges player={optimal} />
             </div>
             <div className="flex flex-col items-end shrink-0">
-              <span className="text-sm font-bold text-blue-300">{optimal.pts}</span>
-              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Proj</span>
+              <span className="text-sm font-bold text-blue-300">{startPts(optimal)}</span>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">{unit}</span>
             </div>
           </div>
         ) : (
@@ -123,7 +125,7 @@ function SeatRow({
               </span>
             </div>
             <span className="text-sm text-gray-600 line-through shrink-0">
-              {displaced.pts}
+              {startPts(displaced)}
             </span>
           </div>
         )}
@@ -137,11 +139,13 @@ function HowItWorks({
   optimalTotal,
   gain,
   changes,
+  week,
 }: {
   currentTotal?: number;
   optimalTotal?: number;
   gain: number;
   changes: number;
+  week: number | null;
 }) {
   return (
     <details className="glass-panel border-blue-500/30 bg-blue-900/10 p-4 group">
@@ -157,10 +161,29 @@ function HowItWorks({
       <div className="mt-4 space-y-4 text-xs text-gray-300 leading-relaxed">
         <div>
           <h4 className="text-white font-semibold text-sm mb-1">
-            1. Woher „Proj“ kommt
+            1. Woher die Punkte kommen
           </h4>
+          <p className="mb-2">
+            {week ? (
+              <>
+                Während der Saison zählt die <strong className="text-white">Prognose
+                für Woche {week}</strong>, nicht die Saisonprognose: eine Aufstellung
+                wird für ein Spiel gesetzt. Gegner und Bye-Wochen stecken darin — ein
+                Spieler im Bye projiziert 0. Wer diese Woche <em>Out</em> ist, bekommt
+                ebenfalls 0, <em>Doubtful</em> wird abgeschlagen. <em>Questionable</em>{" "}
+                bleibt ohne Abschlag: die meisten spielen, und ob dieser spielt, steht
+                vor dem Kickoff fest — nicht am Freitag. Solche Starter stehen oben als
+                Warnung. Spieler, deren Spiel schon gelaufen ist
+                (<span className="text-gray-400">🔒 gespielt</span>), bleiben, wo sie
+                sind: sie können weder rein noch raus, optimiert wird nur der Rest.
+              </>
+            ) : (
+              <>Außerhalb der Saison gibt es keine Wochenprognose — dann zählt die
+              Saisonprognose.</>
+            )}
+          </p>
           <p>
-            Sleeper veröffentlicht eine Saisonprognose pro Spieler — im selben
+            Sleeper veröffentlicht die Prognosen pro Spieler — im selben
             Stat-Schema wie die echten Statistiken (<code className="text-blue-300">pass_yd</code>,{" "}
             <code className="text-blue-300">reb</code>, <code className="text-blue-300">idp_tkl_solo</code>{" "}
             …). Diese Rohwerte laufen durch das <em>Scoring deiner Liga</em>, nicht
@@ -220,7 +243,9 @@ function HowItWorks({
                 <span className="text-green-400 font-bold">+{gain}</span>. Verglichen wird{" "}
                 <em>spielerweise</em>, nicht platzweise: zwei Spieler, die zwischen
                 zwei gleichwertigen Slots tauschen, ändern nichts und werden
-                deshalb auch nicht als Änderung gemeldet.
+                deshalb auch nicht als Änderung gemeldet. Rein und Raus werden
+                zuerst innerhalb desselben Slots gepaart — Kicker gegen Kicker —
+                und erst danach über Positionen hinweg.
               </>
             )}
           </p>
@@ -356,6 +381,8 @@ function LineupContent() {
   const bench = data?.bench ?? [];
   const warnings = data?.warnings ?? [];
   const gain = data?.gain ?? 0;
+  const week = data?.week ?? null;
+  const unit = week ? `W${week}` : "Proj";
   const benchedIds = new Set(
     changes.map((c) => c.out?.id).filter(Boolean) as string[]
   );
@@ -368,7 +395,9 @@ function LineupContent() {
           <p className="text-gray-400 mt-1">
             <span className="text-gray-200 font-medium">{data?.league.name}</span>
             {" · "}
-            Beste zulässige Aufstellung, Mehrfach-Positionen berücksichtigt
+            {week
+              ? `Beste Aufstellung für Woche ${week}, Mehrfach-Positionen berücksichtigt`
+              : "Beste zulässige Aufstellung, Mehrfach-Positionen berücksichtigt"}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -432,7 +461,7 @@ function LineupContent() {
                   {c.in.name}
                   <InjuryBadge injury={c.in.injury} />
                 </span>
-                <span className="text-blue-300 font-bold">{c.in.pts}</span>
+                <span className="text-blue-300 font-bold">{startPts(c.in)}</span>
                 {c.out && (
                   <>
                     <span className="text-gray-600">·</span>
@@ -442,14 +471,15 @@ function LineupContent() {
                       {c.out.name}
                       <InjuryBadge injury={c.out.injury} />
                     </span>
-                    <span className="text-gray-500 font-bold">{c.out.pts}</span>
+                    <span className="text-gray-500 font-bold">{startPts(c.out)}</span>
                   </>
                 )}
               </div>
             ))}
             <p className="text-xs text-gray-500 pt-1">
-              Rein und Raus sind über Positionen hinweg gepaart — entscheidend ist die
-              Menge, nicht das einzelne Paar. Der Gesamtgewinn oben stimmt exakt.
+              Rein und Raus sind wo möglich im selben Slot gepaart, sonst über
+              Positionen hinweg — entscheidend ist die Menge, nicht das einzelne
+              Paar. Der Gesamtgewinn oben stimmt exakt.
             </p>
           </div>
         )}
@@ -460,6 +490,7 @@ function LineupContent() {
         optimalTotal={data?.total}
         gain={gain}
         changes={changes.length}
+        week={week}
       />
 
       {warnings.length > 0 && (
@@ -499,6 +530,7 @@ function LineupContent() {
                 movesTo={seat.movesTo}
                 incoming={seat.incoming}
                 backup={seat.backup}
+                unit={unit}
               />
             ))}
           </div>
@@ -525,15 +557,16 @@ function LineupContent() {
                     {p.name}
                     <InjuryBadge injury={p.injury} />
                   </div>
-                  <div className="text-xs text-gray-500">
-                    {p.team}
+                  <div className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
+                    <span>{p.team}</span>
+                    <MatchupBadge player={p} />
                     {benchedIds.has(p.id) && (
                       <span className="text-red-400/80"> · startet aktuell, sollte raus</span>
                     )}
                   </div>
                   <SignalBadges player={p} />
                 </div>
-                <span className="text-sm font-bold text-blue-300 shrink-0">{p.pts}</span>
+                <span className="text-sm font-bold text-blue-300 shrink-0">{startPts(p)}</span>
               </div>
             ))}
             {bench.length === 0 && (

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { League, Draft } from "@/lib/types";
+import type { League, Draft, Overview } from "@/lib/types";
 import {
   subscribeToSearch,
   getSearchSnapshot,
@@ -38,6 +38,7 @@ export default function Dashboard() {
   const [manualId, setManualId] = useState("");
   const [manualLoading, setManualLoading] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
+  const [overview, setOverview] = useState<Overview | null>(null);
 
   const username = usernameInput ?? cached?.username ?? "p4t0b4ll3rs";
   const season = seasonInput ?? cached?.season ?? "all";
@@ -62,6 +63,32 @@ export default function Dashboard() {
     (d) => !d.league_id || leagues.some((l) => l.league_id === d.league_id)
   );
   const cachedAt = fetched ? null : cached?.savedAt ?? null;
+
+  // The overview is a stored snapshot, so reading it is cheap - but it only
+  // exists for configured usernames, and a missing one is not an error here.
+  const overviewUser = fetched ? username : cached?.username;
+  useEffect(() => {
+    if (!overviewUser || sport !== "nfl") return;
+    let active = true;
+    apiGet<Overview>("get_overview", { username: overviewUser, sport })
+      .then((result) => {
+        if (active) setOverview(result);
+      })
+      .catch(() => {
+        if (active) setOverview(null);
+      });
+    return () => {
+      active = false;
+    };
+    // Keyed on the searched username, not the input field: re-read after a
+    // search, never on a keystroke.
+  }, [overviewUser, sport, fetched]);
+  const severityByLeague = new Map(
+    (overview?.lineup.leagues ?? []).map((l) => [l.league_id, l.severity])
+  );
+  const overviewLeagues = (overview?.lineup.leagues ?? []).filter((l) => !l.skipped);
+  const urgentCount = overviewLeagues.filter((l) => l.severity >= 2).length;
+  const hintCount = overviewLeagues.filter((l) => l.severity === 1).length;
 
   const setUsername = setUsernameInput;
   const setSeason = setSeasonInput;
@@ -203,6 +230,29 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {overview && (
+        <Link
+          href={`/overview?${linkParams({})}`}
+          className={`glass-panel max-w-xl mx-auto p-4 flex items-center gap-4 border-l-4 transition-colors hover:border-blue-500/50 ${
+            urgentCount ? "border-l-red-500 bg-red-900/10" : "border-l-green-500 bg-green-900/10"
+          }`}
+        >
+          <div className="text-2xl">{urgentCount ? "⚠" : "✓"}</div>
+          <div className="flex-1 text-sm">
+            <div className="text-white font-bold">
+              Wochenübersicht{overview.week ? ` · Woche ${overview.week}` : ""}
+            </div>
+            <div className="text-gray-400">
+              {urgentCount
+                ? `${urgentCount} ${urgentCount === 1 ? "Aufstellung braucht" : "Aufstellungen brauchen"} Aufmerksamkeit`
+                : "Alle Aufstellungen in Ordnung"}
+              {hintCount > 0 && ` · ${hintCount} mit Hinweisen`}
+            </div>
+          </div>
+          <span className="text-blue-400 text-sm font-medium">Öffnen →</span>
+        </Link>
+      )}
+
       {!loading && leagues.length === 0 && drafts.length === 0 && (
         <p className="text-center text-gray-500 text-sm">
           Noch keine Ligen geladen. Username eingeben, Sportart wählen und „Ligen laden“ drücken.
@@ -264,6 +314,18 @@ export default function Dashboard() {
                         Status: <span className="capitalize">{league.status}</span>
                       </p>
                     </div>
+                    {(severityByLeague.get(league.league_id) ?? 0) >= 2 && (
+                      <Link
+                        href={`/overview?${linkParams({})}`}
+                        className={`mt-3 inline-flex items-center gap-1 text-xs font-semibold ${
+                          severityByLeague.get(league.league_id) === 3
+                            ? "text-red-300 hover:text-red-200"
+                            : "text-orange-300 hover:text-orange-200"
+                        }`}
+                      >
+                        ⚠ Aufstellung prüfen →
+                      </Link>
+                    )}
                   </div>
                   <div className="bg-gray-900/50 px-6 py-3 border-t border-gray-800 flex flex-wrap gap-4 justify-between items-center">
                     <Link

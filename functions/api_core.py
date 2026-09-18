@@ -185,6 +185,10 @@ def projections_file(sport, year):
     return f"projections_{sport}_{year}.json"
 
 
+def week_projections_file(sport, year):
+    return f"projections_{sport}_{year}_weekly.json"
+
+
 def current_season(sport):
     state = sleeper_api.get_state(sport) or {}
     return str(state.get("league_season") or state.get("season") or "2026")
@@ -222,6 +226,118 @@ def projected_points(sport, scoring_settings, players_db):
     return out
 
 
+# Weeks the weekly model looks ahead, this one included: what a waiver pickup
+# is worth over the next month, not over a season half of which a manager
+# may not survive.
+WEEK_HORIZON = 5
+
+
+def current_week(sport):
+    """The week lineups are being set for, or None outside the regular season.
+
+    Sleeper's `week` turns over on Tuesday, when the previous week is scored,
+    so from then on it names the week whose games are coming up.
+    """
+    if sport != "nfl":
+        return None
+    state = sleeper_api.get_state(sport) or {}
+    if state.get("season_type") != "regular":
+        return None
+    try:
+        return int(state.get("week"))
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_week_window(sport, season, week):
+    """Projections for `week` and the weeks behind it, as stored on disk."""
+    weeks = {}
+    for w in range(week, week + WEEK_HORIZON):
+        data = projections.fetch_week_projections(sport, season, w)
+        if data is None:
+            # A failed request must not pass for a bye week, so the window
+            # stops at the first gap instead of carrying a hole.
+            break
+        if not data["opp"]:
+            break  # past the end of the regular season
+        weeks[str(w)] = data
+    return {"season": str(season), "week": week, "fetched_at": int(time.time()),
+            "weeks": weeks}
+
+
+def load_week_projections(sport="nfl"):
+    """The stored weekly window, or a live fetch when it does not cover this week.
+
+    Sleeper's week turns over on Tuesday and the scheduled refresh follows a
+    few hours later. In between, the stored file starts a week early - still
+    usable, it just looks one week less far ahead.
+    """
+    week = current_week(sport)
+    if not week:
+        return None
+    season = current_season(sport)
+    filename = week_projections_file(sport, season)
+    data = load_json(filename)
+    if data and str(week) in (data.get("weeks") or {}):
+        return data
+    data = fetch_week_window(sport, season, week)
+    if data["weeks"]:
+        _JSON_CACHE[filename] = (time.time(), data)
+        return data
+    return None
+
+
+def _today_us():
+    """Today's date where the games are played. A game dated before it is over."""
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+        return datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    except Exception:
+        from datetime import datetime, timedelta, timezone
+        return (datetime.now(timezone.utc) - timedelta(hours=4)).date().isoformat()
+
+
+def weekly_points(sport, scoring_settings, players_db):
+    """This week and the horizon behind it, scored under this league's settings.
+
+    Returns None outside the regular season, and callers fall back to the
+    season projection then. Otherwise:
+
+      week    the week lineups are being set for
+      weeks   the weeks that were projected, this one first
+      pts     {pid: [points per week in `weeks`]}; a missing row is 0.0 - a
+              player Sleeper does not project to play scores nothing
+      opp     {week: {team: opponent}}; a team missing from a week is on bye
+      date    {team: game date this week}
+      today   today's date in the US, to tell which games are over
+    """
+    data = load_week_projections(sport)
+    if not data:
+        return None
+    week = current_week(sport)
+    weeks = sorted(int(w) for w in data["weeks"] if int(w) >= week)[:WEEK_HORIZON]
+    if not weeks:
+        return None
+
+    pts = {}
+    for i, w in enumerate(weeks):
+        for pid, p_stats in data["weeks"][str(w)]["stats"].items():
+            player = (players_db or {}).get(str(pid))
+            pos = player.get("position") if player else None
+            row = pts.setdefault(str(pid), [0.0] * len(weeks))
+            row[i] = round(calculate_custom_score(p_stats, pos, scoring_settings, sport), 2)
+
+    return {
+        "week": week,
+        "weeks": weeks,
+        "pts": pts,
+        "opp": {w: data["weeks"][str(w)]["opp"] for w in weeks},
+        "date": data["weeks"][str(weeks[0])].get("date", {}),
+        "today": _today_us(),
+    }
+
+
 def load_team_strength():
     """Relative team strength, kept in data/ so it can be updated per season
     instead of living as a hardcoded dict in the scoring code."""
@@ -238,6 +354,10 @@ def load_college_stats():
 
 # How much a season counts towards the long-term picture: most recent first.
 RECENCY_WEIGHTS = [1.0, 0.6, 0.35]
+
+# Weight of the season in progress, once it is complete. Until then it counts
+# for the share of a season a player has actually played.
+IN_SEASON_WEIGHT = 1.0
 
 # QBs out-score everyone in raw points, TEs score least; normalize before comparing.
 POSITION_NORMALIZATION = {"QB": 0.5, "RB": 0.8, "WR": 0.8, "TE": 1.2}
@@ -336,6 +456,52 @@ def _score_nfl_offense(p_stats, pos, scoring):
     return round(score + rec_score, 2)
 
 
+# Kickers and team defenses are scored the way Sleeper scores everything: the
+# stat keys *are* the scoring keys, and the score is their dot product. Both
+# used to fall through to the offense scorer, which knows no `fgm_*` and no
+# `pts_allow_*` - so every kicker and every defense scored exactly 0.0, and a
+# K slot looked empty however good the kicker in it.
+#
+# Each position only reads its own keys. A defense row also carries `pr_yd`
+# and `kr_yd`, which a league may score for individual returners; summing
+# every matching key would pay a defense for those too.
+_KICKER_PREFIXES = ("fgm", "xpm")  # also covers fgmiss*, xpmiss
+_DEF_PREFIXES = ("def_", "pts_allow_", "yds_allow_")
+_DEF_KEYS = {"sack", "int", "fum_rec", "ff", "safe", "blk_kick", "tkl_loss", "qb_hit"}
+
+
+def _kicker_stats(p_stats):
+    """Fill in the kicking keys a league may score but a row may not carry.
+
+    Projections list misses by distance and never as a total, and leagues
+    split long field goals as 50+ or as 50-59 / 60+. Derived keys are only
+    added when missing, so a row that has them is never counted twice.
+    """
+    out = dict(p_stats)
+    if "fgmiss" not in out:
+        buckets = [v or 0 for k, v in out.items() if k.startswith("fgmiss_")]
+        if buckets:
+            out["fgmiss"] = sum(buckets)
+        elif "fga" in out and "fgm" in out:
+            out["fgmiss"] = max(0, (out["fga"] or 0) - (out["fgm"] or 0))
+    if "fgm_50p" not in out and ("fgm_50_59" in out or "fgm_60p" in out):
+        out["fgm_50p"] = (out.get("fgm_50_59") or 0) + (out.get("fgm_60p") or 0)
+    if "fgm_50_59" not in out and "fgm_60p" not in out and "fgm_50p" in out:
+        # 60+ yarders are rare enough that 50+ is almost entirely 50-59.
+        out["fgm_50_59"] = out["fgm_50p"]
+    return out
+
+
+def _score_by_keys(p_stats, scoring, prefixes=(), keys=()):
+    total = 0.0
+    for key, weight in (scoring or {}).items():
+        if not isinstance(weight, (int, float)):
+            continue
+        if key in keys or key.startswith(prefixes):
+            total += (p_stats.get(key) or 0) * weight
+    return round(total, 2)
+
+
 def calculate_custom_score(p_stats, pos, scoring, sport="nfl"):
     """Scores a season under the league's own scoring settings."""
     if sport == "nba":
@@ -344,6 +510,10 @@ def calculate_custom_score(p_stats, pos, scoring, sport="nfl"):
     if not scoring:
         return max(p_stats.get("pts_ppr", 0) or 0, p_stats.get("pts_idp", 0) or 0)
 
+    if pos == "K":
+        return _score_by_keys(_kicker_stats(p_stats), scoring, _KICKER_PREFIXES)
+    if pos == "DEF":
+        return _score_by_keys(p_stats, scoring, _DEF_PREFIXES, _DEF_KEYS)
     if pos in IDP_POSITIONS:
         return _score_nfl_idp(p_stats, scoring)
     return _score_nfl_offense(p_stats, pos, scoring)
@@ -362,26 +532,42 @@ def recent_seasons(sport, count=4):
 
 
 def load_multi_year_stats(years=[2023, 2024, 2025], scoring_settings=None, players_db=None, sport="nfl"):
-    """Aggregates per-season scoring. `pts_w` is recency weighted, `pts` stays the raw sum."""
+    """Aggregates per-season scoring. `pts_w` is recency weighted, `pts` stays the raw sum.
+
+    Only complete seasons take a recency slot. The season in progress is
+    blended in on top of them, as a pace weighted by the games behind it.
+    It used to take the top slot like any other season - as a season *total*.
+    One week in, that put a one-game total at weight 1.0 next to full seasons
+    and halved the history of everyone who had played (Drake Maye 294.8 ->
+    150.8), while a player who sat week 1 out kept his full number. Injured
+    players ranked up for being injured.
+    """
     aggregated_stats = {}
     ordered = sorted(years, reverse=True)
+    full_season = projections.SEASON_GAMES.get(sport, 17)
 
     idx = 0
+    newest = True
     for year in ordered:
-        if idx >= len(RECENCY_WEIGHTS):
-            break
         stats = load_json(stats_file(sport, year))
         # Sleeper ships a stats file for the current season during preseason, full
         # of zero-game entries. It is not empty, but it carries no signal - so
-        # check for actual games played before it consumes a recency weight.
-        if not any((s.get("gp") or 0) > 0 for s in stats.values()):
+        # check for actual games played before it counts as a season at all.
+        played = max(((s.get("gp") or 0) for s in stats.values()), default=0)
+        if not played:
             continue
-        weight = RECENCY_WEIGHTS[idx]
-        idx += 1
+        in_progress = newest and played < full_season
+        newest = False
+        if not in_progress:
+            if idx >= len(RECENCY_WEIGHTS):
+                break
+            weight = RECENCY_WEIGHTS[idx]
+            idx += 1
         for pid, p_stats in stats.items():
             if pid not in aggregated_stats:
                 aggregated_stats[pid] = {"pts": 0, "gp": 0, "tkl": 0, "rec": 0,
-                                        "years_played": 0, "_wpts": 0.0, "_wsum": 0.0}
+                                        "years_played": 0, "_wpts": 0.0, "_wsum": 0.0,
+                                        "_pace": None}
             gp = p_stats.get("gp", 0) or 0
             if gp > 0:
                 pos = None
@@ -394,10 +580,27 @@ def load_multi_year_stats(years=[2023, 2024, 2025], scoring_settings=None, playe
                 agg["tkl"] += (p_stats.get("idp_tkl", 0) or 0)
                 agg["rec"] += (p_stats.get("rec", 0) or 0)
                 agg["years_played"] += 1
-                agg["_wpts"] += pts * weight
-                agg["_wsum"] += weight
+                if in_progress:
+                    agg["_pace"] = (pts / gp * full_season, min(gp, full_season) / full_season)
+                else:
+                    agg["_wpts"] += pts * weight
+                    agg["_wsum"] += weight
 
     for agg in aggregated_stats.values():
+        pace = agg.pop("_pace")
+        if pace and agg["_wsum"]:
+            # Worth its share of a season at full weight: one game is a
+            # seventeenth of a season, and counts as one.
+            value, share = pace
+            agg["_wpts"] += value * IN_SEASON_WEIGHT * share
+            agg["_wsum"] += IN_SEASON_WEIGHT * share
+        elif pace:
+            # Nothing complete to weigh a pace against - a rookie, or a player
+            # back from years away. One big game extrapolates to a monster
+            # season, so report what he has actually done so far instead.
+            value, share = pace
+            agg["pts_w"] = round(value * share, 2)
+            continue
         agg["pts_w"] = round(agg["_wpts"] / agg["_wsum"], 2) if agg["_wsum"] else 0.0
 
     return aggregated_stats
@@ -1305,7 +1508,64 @@ def _depth_reason(target, drop, edge, severity, levels):
     return body
 
 
-def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None):
+def _week_availability(sig):
+    """How much of this week's projection a player can be expected to deliver.
+
+    `redraft_mult` prices a designation over a season: an "Out" costs a tenth
+    of it. For the one game he is out of, it costs all of it.
+
+    "Questionable" costs nothing here. Most questionable players play, and
+    whether this one does is known before kickoff, not on the Friday the
+    lineup is checked - the 20% season discount benched Joe Burrow for Tyler
+    Shough. The designation is flagged on the lineup check instead, which is
+    the actual instruction: look again before the game. "Doubtful" players
+    mostly sit, and keep the discount.
+    """
+    injury = (sig or {}).get("injury") or {}
+    severity = injury.get("severity") or 0
+    if severity >= 3:
+        return 0.0
+    if severity <= 1:
+        return 1.0
+    return injury.get("redraft_mult", 1.0)
+
+
+def _week_fields(pid, player, sig, weekly):
+    """This week's points and schedule for one player, or Nones off-season."""
+    if not weekly:
+        return {"pts_week": None, "pts_horizon": None, "opp": None,
+                "bye": False, "bye_week": None, "locked": False}
+
+    weeks = weekly["weeks"]
+    row = weekly["pts"].get(str(pid)) or [0.0] * len(weeks)
+    injury = (sig or {}).get("injury") or {}
+    team = player.get("team")
+    opp = weekly["opp"][weeks[0]].get(team) if team else None
+    byes = [w for w in weeks if team and team not in weekly["opp"][w]]
+    date = weekly["date"].get(team) if team else None
+    locked = bool(date) and date < weekly["today"]
+
+    # A designation filed after his game - hurt on Thursday night - is about
+    # the games still to come. This week's points are already on the board.
+    now = 1.0 if locked else _week_availability(sig)
+    # A short-term designation is about this game. A long-term one - IR, PUP,
+    # suspension - keeps costing in the weeks after it.
+    later = injury.get("redraft_mult", 1.0) if injury.get("term") == "long" else 1.0
+
+    return {
+        "pts_week": round(row[0] * now, 1),
+        "pts_horizon": round(row[0] * now + sum(row[1:]) * later, 1),
+        "opp": opp,
+        "bye": bool(byes) and byes[0] == weeks[0],
+        "bye_week": byes[0] if byes else None,
+        # His game is over: whatever he scored is on the board, and he can be
+        # neither started nor benched any more.
+        "locked": locked,
+    }
+
+
+def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None,
+                  weekly=None):
     """One enriched player record, keyed by the positions the league's slots use."""
     p_stats = stats.get(str(pid), {})
     proj = (projs or {}).get(str(pid))
@@ -1335,24 +1595,30 @@ def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, pro
         "opportunity": sig["opportunity"] if sig else None,
         "news_days": sig["recency"]["news_days"] if sig else None,
     }
+    entry.update(_week_fields(pid, player, sig, weekly))
     if extra:
         entry.update(extra)
     return entry
 
 
-def _model_inputs(sport, scoring_settings):
+def _model_base(sport):
+    """The half of the model inputs that no league setting changes."""
+    players = load_players(sport)
+    return players, load_college_stats(), signals.build_signals(players, sport)
+
+
+def _model_inputs(sport, scoring_settings, base=None):
     """Everything the scoring model reads, loaded once per request.
 
     All three analysis endpoints need exactly this bundle; keeping it in one
     place is what stops the projection layer from being wired into two of them
     and forgotten in the third.
     """
-    players = load_players(sport)
-    college_data = load_college_stats()
+    players, college_data, signals_by_pid = base or _model_base(sport)
     stats = load_multi_year_stats(recent_seasons(sport), scoring_settings, players, sport)
-    signals_by_pid = signals.build_signals(players, sport)
     projs = projected_points(sport, scoring_settings, players)
-    return players, college_data, stats, signals_by_pid, projs
+    weekly = weekly_points(sport, scoring_settings, players)
+    return players, college_data, stats, signals_by_pid, projs, weekly
 
 
 def analyze_waivers_api(username, league_id, sport="nfl"):
@@ -1383,7 +1649,7 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     if waiver_budget:
         budget_left = waiver_budget - (my_roster.get("settings") or {}).get("waiver_budget_used", 0)
 
-    players, college_data, stats, signals_by_pid, projs = _model_inputs(sport, scoring_settings)
+    players, college_data, stats, signals_by_pid, projs, weekly = _model_inputs(sport, scoring_settings)
 
     rostered_ids = {str(pid) for r in rosters for pid in (r.get("players") or [])}
 
@@ -1399,7 +1665,8 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
         if not p:
             continue
         sig = signals_by_pid.get(str(pid))
-        entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs)
+        entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs,
+                              weekly=weekly)
         entry["protected"] = drop_protection(p, entry["dvs"], entry["pts"], sig, levels) if sig else None
         entry["is_liability"] = (entry["pts"] < levels.get(entry["pos"], {}).get("pts", 0)
                                  and not entry["protected"])
@@ -1434,7 +1701,8 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
         if sig["injury"]["severity"] >= 4 and intensity < 0.05:
             continue
 
-        entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs)
+        entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs,
+                              weekly=weekly)
         pos = entry["pos"]
         severity = need_by_pos.get(pos, {}).get("severity", 0)
         replacement_pts = levels.get(pos, {}).get("pts", 0)
@@ -1521,7 +1789,7 @@ def current_lineup(my_roster, roster_positions, squad):
     return out
 
 
-def lineup_changes(current, optimal):
+def lineup_changes(current, optimal, value_of=_start_value):
     """Who should be starting who is not, and who should sit for them.
 
     Compared per player rather than per slot. Two players swapping between two
@@ -1530,12 +1798,14 @@ def lineup_changes(current, optimal):
     opposite "gains" - and that noise buried the two or three moves that
     actually matter.
 
-    The best available addition is paired against the weakest player it
-    displaces, which is the form the instruction is acted on in: start Y
-    instead of X. No per-pair gain is reported: the pairing crosses positions,
-    so the difference between an incoming linebacker and an outgoing receiver
-    is not a number that means anything. The gain lives on the report as a
-    whole, where it reconciles exactly.
+    The instruction is acted on as "start Y instead of X", so each addition is
+    paired with a player it displaces - first with one leaving the same kind
+    of seat, and only then, across positions, by value. Pairing by value
+    alone read "start the 7-point kicker over the 14-point running back" in a
+    league where the kicker was replacing the kicker and the back a back. No
+    per-pair gain is reported: a pair that still crosses positions is no
+    like-for-like swap. The gain lives on the report as a whole, where it
+    reconciles exactly.
     """
     now_ids = {s["player"]["id"] for s in current if s.get("player")}
     best_ids = {s["player"]["id"] for s in optimal if s.get("player")}
@@ -1545,17 +1815,27 @@ def lineup_changes(current, optimal):
         player = s.get("player")
         if player:
             slot_of[player["id"]] = s["slot"]
+    seat_now = {s["player"]["id"]: s["slot"] for s in current if s.get("player")}
 
     sit = sorted((s["player"] for s in current
                   if s.get("player") and s["player"]["id"] not in best_ids),
-                 key=_start_value)
+                 key=value_of)
     start = sorted((s["player"] for s in optimal
                     if s.get("player") and s["player"]["id"] not in now_ids),
-                   key=_start_value, reverse=True)
+                   key=value_of, reverse=True)
+
+    partner = {}
+    for player in start:
+        same_seat = next((o for o in sit if o["id"] not in partner.values()
+                          and seat_now.get(o["id"]) == slot_of.get(player["id"])), None)
+        if same_seat:
+            partner[player["id"]] = same_seat["id"]
+    rest = iter(o for o in sit if o["id"] not in partner.values())
+    by_id = {o["id"]: o for o in sit}
 
     changes = []
-    for i, player in enumerate(start):
-        out = sit[i] if i < len(sit) else None
+    for player in start:
+        out = by_id.get(partner.get(player["id"])) or next(rest, None)
         changes.append({
             "slot": slot_of.get(player["id"]),
             "in": _strip_one(player),
@@ -1566,6 +1846,168 @@ def lineup_changes(current, optimal):
 
 def _strip(players):
     return [_strip_one(p) for p in players]
+
+
+def _week_value(player):
+    """What a player is worth to the lineup being set right now.
+
+    This week's projection: a lineup is set for one game, and ranking it by
+    season totals started a player on bye over a healthy one, and a
+    receiver with a soft matchup behind one with a brutal one. Off-season
+    there is no weekly projection for anyone, and the season projection
+    stands in for everyone at once - never for a single player next to
+    weekly numbers, which would compare a season with a game.
+    """
+    week = player.get("pts_week")
+    return week if week is not None else _start_value(player)
+
+
+def best_lineup_now(squad, roster_positions, current, value_of=_week_value):
+    """The best lineup that can still be set.
+
+    A player whose game is over is fixed where he is: a starter keeps his seat
+    and his points, a benched one cannot come in any more. On a Friday the
+    Thursday game is done, and a recommendation to bench a player who has
+    already scored is one nobody can follow. Only the open seats are
+    optimised, over the players still to play.
+    """
+    slots = lineup.starting_slots(roster_positions)
+    fixed = {i: seat["player"] for i, seat in enumerate(current)
+             if seat.get("player") and seat["player"].get("locked")}
+    fixed_ids = {p["id"] for p in fixed.values()}
+    open_seats = [i for i in range(len(slots)) if i not in fixed]
+    pool = [p for p in squad if not p.get("locked") and p["id"] not in fixed_ids]
+
+    seated = [None] * len(slots)
+    for i, player in fixed.items():
+        seated[i] = player
+    placed = lineup.build_lineup(pool, [slots[i] for i in open_seats], value_of)
+    for i, (_, player) in zip(open_seats, placed):
+        seated[i] = player
+
+    starting = {p["id"] for p in seated if p is not None}
+    bench = sorted((p for p in squad if p["id"] not in starting), key=lambda p: -value_of(p))
+    return {
+        "slots": [{"slot": slot, "player": seated[i]} for i, slot in enumerate(slots)],
+        "bench": bench,
+        "total": round(sum(value_of(p) for p in seated if p is not None), 1),
+        "empty": [slot for i, slot in enumerate(slots) if seated[i] is None],
+    }
+
+
+# Below this, "start X instead of Y" is a coin flip between two projections and
+# not worth a manager's attention - every league would be flagged every week.
+ISSUE_BENCH_GAIN = 1.5
+# From here it is worth acting on: roughly the gap between a flex starter and a
+# bench body. In between it is a hint, not a problem - grading +1.7 like an
+# empty slot put seven of eight leagues under "needs action".
+ISSUE_BENCH_GAIN_URGENT = 5.0
+
+
+def lineup_issues(current, gain):
+    """What is wrong with the lineup as it is set in Sleeper right now.
+
+    Graded 3 (scores nothing unless fixed), 2 (likely costs points), 1 (worth
+    a look). A player whose game is over is skipped - there is nothing left
+    to do about him.
+    """
+    issues = []
+    for seat in current:
+        player = seat.get("player")
+        if player is None:
+            issues.append({"kind": "empty", "severity": 3, "slot": seat["slot"], "player": None})
+            continue
+        if player.get("locked"):
+            continue
+        entry = {"slot": seat["slot"], "player": _strip_one(player)}
+        severity = ((player.get("injury") or {}).get("severity") or 0)
+        if player.get("bye"):
+            issues.append({"kind": "bye", "severity": 3, **entry})
+        elif severity >= 3:
+            issues.append({"kind": "out", "severity": 3, **entry})
+        elif severity == 2:
+            issues.append({"kind": "doubtful", "severity": 2, **entry})
+        elif severity == 1:
+            issues.append({"kind": "questionable", "severity": 1, **entry})
+    if gain >= ISSUE_BENCH_GAIN:
+        issues.append({"kind": "bench", "slot": None, "player": None, "gain": gain,
+                       "severity": 2 if gain >= ISSUE_BENCH_GAIN_URGENT else 1})
+    issues.sort(key=lambda i: -i["severity"])
+    return issues
+
+
+def _lineup_analysis(my_roster, roster_positions, inputs):
+    """Current lineup, best lineup still possible, and the gap between them.
+
+    Shared by the optimizer page and the cross-league overview, so both give
+    the same answer for the same league.
+    """
+    players, college_data, stats, signals_by_pid, projs, weekly = inputs
+    squad = []
+    for pid in my_roster.get("players") or []:
+        p = players.get(str(pid))
+        if not p:
+            continue
+        squad.append(_player_entry(pid, p, stats, college_data,
+                                   signals_by_pid.get(str(pid)), None,
+                                   projs=projs, weekly=weekly))
+
+    current = current_lineup(my_roster, roster_positions, squad)
+    report = best_lineup_now(squad, roster_positions, current)
+    starters = {s["player"]["id"] for s in report["slots"] if s["player"]}
+
+    slots = []
+    for entry in report["slots"]:
+        slot, player = entry["slot"], entry["player"]
+        accepts = lineup.slot_accepts(slot)
+        # Who else could take this slot if the starter is out?
+        alternatives = sorted(
+            (p for p in squad
+             if p["elig"] & accepts and p["id"] not in starters and not p.get("locked")),
+            key=lambda p: -_week_value(p),
+        )[:3]
+        slots.append({
+            "slot": slot,
+            "accepts": sorted(accepts),
+            "player": _strip_one(player),
+            "alternatives": _strip(alternatives),
+        })
+
+    # A starter who is hurt is the thing you actually need to see here - unless
+    # his game is over, and there is nothing left to do about him this week.
+    warnings = []
+    for entry in report["slots"]:
+        player = entry["player"]
+        if (player and not player.get("locked")
+                and (player.get("injury") or {}).get("severity", 0) >= 1):
+            warnings.append({
+                "slot": entry["slot"],
+                "player": player["name"],
+                "injury": player["injury"],
+            })
+
+    changes = lineup_changes(current, report["slots"], _week_value)
+    current_total = round(
+        sum(_week_value(s["player"]) for s in current if s["player"]), 1)
+    gain = round(report["total"] - current_total, 1)
+
+    return {
+        "week": weekly["week"] if weekly else None,
+        "slots": slots,
+        # Not "current": the frontend's React compiler reads any `.current`
+        # property access as a ref and stops optimizing the component around it.
+        "current_slots": [{"slot": s["slot"], "player": _strip_one(s["player"])}
+                          for s in current],
+        "current_total": current_total,
+        "gain": gain,
+        "changes": changes,
+        "bench": _strip(report["bench"]),
+        "total": report["total"],
+        "empty": report["empty"],
+        "warnings": warnings,
+        "issues": lineup_issues(current, gain),
+        "positions": sorted(lineup.positions_in_use(roster_positions)),
+    }
 
 
 def optimize_lineup_api(username, league_id, sport="nfl"):
@@ -1588,77 +2030,89 @@ def optimize_lineup_api(username, league_id, sport="nfl"):
     my_roster = next((r for r in rosters if r.get("owner_id") == user_id), None)
     if not my_roster:
         return {"error": "Roster not found"}
-    my_player_ids = my_roster.get("players") or []
-    if not my_player_ids:
+    if not my_roster.get("players"):
         return {"error": "Dein Roster in dieser Liga ist leer."}
 
-    players, college_data, stats, signals_by_pid, projs = _model_inputs(sport, scoring_settings)
+    result = _lineup_analysis(my_roster, roster_positions,
+                              _model_inputs(sport, scoring_settings))
+    result["league"] = {"name": league_info.get("name"), "teams": num_teams}
+    return result
 
-    req = starter_requirements(roster_positions)
-    levels = replacement_levels(rosters, players, stats, college_data,
-                                signals_by_pid, req, num_teams, sport, projs=projs,
-                                roster_positions=roster_positions)
 
-    squad = []
-    for pid in my_player_ids:
-        p = players.get(str(pid))
-        if not p:
+def _league_format(league):
+    """What kind of league this is, as far as setting a lineup is concerned.
+
+    Deliberately narrow for now: the waiver strategy per format is its own
+    change. Best ball matters here because Sleeper sets those lineups itself.
+    """
+    settings = league.get("settings") or {}
+    return {
+        "best_ball": bool(settings.get("best_ball")),
+        "type": settings.get("type"),
+    }
+
+
+def lineup_overview_api(username, sport="nfl"):
+    """The lineup check for every league the user is in this season.
+
+    One pass over all leagues, sharing everything that does not depend on a
+    league's scoring: the player database, college profiles and the signal
+    layer (which makes live trending requests) are built once, and leagues
+    with identical scoring share their projections too.
+    """
+    user = sleeper_api.get_user(username)
+    if not user:
+        return {"error": "User not found"}
+    user_id = user["user_id"]
+    season = current_season(sport)
+    leagues = sleeper_api.get_leagues(user_id, sport, season) or []
+
+    base = _model_base(sport)
+    by_scoring = {}
+    week = None
+    out = []
+    for league in leagues:
+        entry = {
+            "league_id": league.get("league_id"),
+            "name": league.get("name"),
+            "teams": league.get("total_rosters"),
+            "format": _league_format(league),
+            "skipped": None,
+            "severity": 0,
+        }
+        out.append(entry)
+        if league.get("status") != "in_season":
+            entry["skipped"] = "not_in_season"
             continue
-        squad.append(_player_entry(pid, p, stats, college_data,
-                                   signals_by_pid.get(str(pid)), levels, projs=projs))
+        if entry["format"]["best_ball"]:
+            entry["skipped"] = "best_ball"
+            continue
+        rosters = sleeper_api.get_rosters(league["league_id"]) or []
+        my_roster = next((r for r in rosters if r.get("owner_id") == user_id), None)
+        if not my_roster or not my_roster.get("players"):
+            entry["skipped"] = "no_roster"
+            continue
 
-    report = lineup.lineup_report(squad, roster_positions, _start_value)
-    starters = {s["player"]["id"] for s in report["slots"] if s["player"]}
-
-    slots = []
-    for entry in report["slots"]:
-        slot, player = entry["slot"], entry["player"]
-        accepts = lineup.slot_accepts(slot)
-        # Who else could take this slot if the starter is out?
-        alternatives = sorted(
-            (p for p in squad
-             if p["elig"] & accepts and p["id"] not in starters),
-            key=lambda p: -_start_value(p),
-        )[:3]
-        slots.append({
-            "slot": slot,
-            "accepts": sorted(accepts),
-            "player": _strip_one(player),
-            "alternatives": _strip(alternatives),
+        scoring = league.get("scoring_settings") or {}
+        key = json.dumps(scoring, sort_keys=True)
+        if key not in by_scoring:
+            by_scoring[key] = _model_inputs(sport, scoring, base)
+        analysis = _lineup_analysis(my_roster, league.get("roster_positions") or [],
+                                    by_scoring[key])
+        week = week or analysis["week"]
+        entry.update({
+            "issues": analysis["issues"],
+            "changes": analysis["changes"],
+            "current_total": analysis["current_total"],
+            "total": analysis["total"],
+            "gain": analysis["gain"],
+            "severity": max((i["severity"] for i in analysis["issues"]), default=0),
         })
 
-    # A starter who is hurt is the thing you actually need to see here.
-    warnings = []
-    for entry in report["slots"]:
-        player = entry["player"]
-        if player and (player.get("injury") or {}).get("severity", 0) >= 1:
-            warnings.append({
-                "slot": entry["slot"],
-                "player": player["name"],
-                "injury": player["injury"],
-            })
-
-    current = current_lineup(my_roster, roster_positions, squad)
-    changes = lineup_changes(current, report["slots"])
-    current_total = round(
-        sum(_start_value(s["player"]) for s in current if s["player"]), 1)
-
-    return {
-        "league": {"name": league_info.get("name"), "teams": num_teams},
-        "slots": slots,
-        # Not "current": the frontend's React compiler reads any `.current`
-        # property access as a ref and stops optimizing the component around it.
-        "current_slots": [{"slot": s["slot"], "player": _strip_one(s["player"])}
-                          for s in current],
-        "current_total": current_total,
-        "gain": round(report["total"] - current_total, 1),
-        "changes": changes,
-        "bench": _strip(report["bench"]),
-        "total": report["total"],
-        "empty": report["empty"],
-        "warnings": warnings,
-        "positions": sorted(lineup.positions_in_use(roster_positions)),
-    }
+    out.sort(key=lambda e: (e["skipped"] is not None, -e["severity"],
+                            -(e.get("gain") or 0), e["name"] or ""))
+    return {"username": username, "sport": sport, "season": season, "week": week,
+            "leagues": out}
 
 
 def update_sleeper_data_api(sport="nfl", college_batch=25):
@@ -1703,6 +2157,18 @@ def update_sleeper_data_api(sport="nfl", college_batch=25):
     else:
         errors.append("Projections")
 
+    # The weekly window moves every Tuesday and its projections move with every
+    # injury report, so it is refetched on every run rather than topped up.
+    week = current_week(sport)
+    if week:
+        window = fetch_week_window(sport, str(current_year), week)
+        if window["weeks"]:
+            _write_data(week_projections_file(sport, str(current_year)), window)
+            first, last = min(window["weeks"], key=int), max(window["weeks"], key=int)
+            updated.append(f"Wochenprojektionen W{first}-W{last}")
+        else:
+            errors.append("Wochenprojektionen")
+
     # College profiles are only relevant for the NFL rookie model, and each one
     # costs an ESPN round trip - so they are topped up in batches.
     fetched = 0
@@ -1736,6 +2202,84 @@ def update_sleeper_data_api(sport="nfl", college_batch=25):
     if errors:
         message += " — fehlgeschlagen: " + ", ".join(errors)
     return {"status": "success", "message": message, "storage": _bucket() is not None}
+
+
+_USERNAME_OK = set("abcdefghijklmnopqrstuvwxyz0123456789_")
+
+
+def overview_file(sport, username):
+    name = (username or "").strip().lower()
+    if not name or not set(name) <= _USERNAME_OK:
+        return None
+    return f"overview_{sport}_{name}.json"
+
+
+def build_overview_snapshot(username, sport="nfl"):
+    """Compute the cross-league overview and store it for the page to read.
+
+    The overview is a snapshot, not a live view: nine leagues through the
+    full model is far too slow for a page load, and the answer only changes
+    when projections and injury reports do - which is what the scheduled
+    refresh picks up.
+    """
+    filename = overview_file(sport, username)
+    if not filename:
+        return {"status": "error", "message": f"Ungültiger Username: {username!r}"}
+    started = time.time()
+    lineup_part = lineup_overview_api(username, sport)
+    if "error" in lineup_part:
+        return {"status": "error", "message": lineup_part["error"]}
+    snapshot = {
+        "username": username,
+        "sport": sport,
+        "season": lineup_part["season"],
+        "week": lineup_part["week"],
+        "generated_at": int(time.time()),
+        "lineup": {"leagues": lineup_part["leagues"]},
+    }
+    _write_data(filename, snapshot)
+    return {"status": "success",
+            "message": f"Übersicht {username}: {len(lineup_part['leagues'])} Ligen "
+                       f"in {time.time() - started:.0f}s"}
+
+
+_SNAPSHOT_CACHE = {}
+_SNAPSHOT_TTL = 120
+
+
+def load_overview_snapshot(username, sport="nfl"):
+    """The stored overview, read fresh from Cloud Storage.
+
+    Not through `load_json`: that pulls a file from the bucket once per
+    container and serves the local copy from then on, which is fine for data
+    refreshed daily and wrong for a snapshot that is rebuilt three times a day
+    in a different container. Locally, without a bucket, the file on disk is
+    the snapshot.
+    """
+    filename = overview_file(sport, username)
+    if not filename:
+        return None
+    hit = _SNAPSHOT_CACHE.get(filename)
+    if hit and time.time() - hit[0] < _SNAPSHOT_TTL:
+        return hit[1]
+
+    data = None
+    bucket = _bucket()
+    if bucket:
+        try:
+            blob = bucket.blob(f"data/{filename}")
+            if blob.exists():
+                data = json.loads(blob.download_as_bytes())
+        except Exception as e:
+            print(f"Snapshot read failed for {filename}: {e}")
+    if data is None:
+        path = os.path.join(CACHE_DIR, filename)
+        if os.path.exists(path):
+            with open(path) as f:
+                data = json.load(f)
+    if data is not None:
+        _SNAPSHOT_CACHE[filename] = (time.time(), data)
+    return data
 
 
 def get_user_drafts_api(username, sport="nfl", season="2026", seasons=None):
@@ -1951,7 +2495,7 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
             for pid in (r.get("players") or []):
                 rostered_ids.add(str(pid))
 
-    players, college_data, stats, signals_by_pid, projs = _model_inputs(sport, scoring_settings)
+    players, college_data, stats, signals_by_pid, projs, weekly = _model_inputs(sport, scoring_settings)
 
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
