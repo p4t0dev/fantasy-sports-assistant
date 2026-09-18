@@ -34,6 +34,12 @@ export default function RootLayout({
 
               </div>
               <div className="flex items-center gap-4">
+                <Link
+                  href="/overview"
+                  className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
+                >
+                  Wochenübersicht
+                </Link>
                 <UpdateDataButton />
               </div>
             </div>

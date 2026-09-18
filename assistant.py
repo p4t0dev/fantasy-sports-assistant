@@ -61,6 +61,47 @@ def show_waivers(username, league_id, sport):
     return 0
 
 
+ISSUE_TEXT = {
+    "empty": "Slot {slot} ist leer",
+    "bye": "{name} ({slot}) hat Bye",
+    "out": "{name} ({slot}) ist {status}",
+    "doubtful": "{name} ({slot}) ist Doubtful",
+    "questionable": "{name} ({slot}) ist Questionable",
+    "bench": "Bank projiziert +{gain} Punkte mehr",
+}
+
+
+def show_overview(username, sport):
+    """Computes the overview live - the CLI is where the snapshot comes from
+    when there is no scheduled job, and waiting eight seconds is fine here."""
+    result = api_core.lineup_overview_api(username, sport)
+    if "error" in result:
+        print(f"Fehler: {result['error']}")
+        return 1
+
+    print(f"--- AUFSTELLUNGS-CHECK, WOCHE {result['week']} ---")
+    for league in result["leagues"]:
+        if league["skipped"]:
+            reason = {"best_ball": "Best Ball, stellt sich selbst auf",
+                      "not_in_season": "nicht in der Saison",
+                      "no_roster": "kein Kader"}.get(league["skipped"], league["skipped"])
+            print(f"\n  {league['name']}: übersprungen ({reason})")
+            continue
+        print(f"\n  [{league['severity']}] {league['name']}  "
+              f"{league['current_total']} -> {league['total']} (+{league['gain']})")
+        for issue in league["issues"]:
+            player = issue.get("player") or {}
+            injury = player.get("injury") or {}
+            print("      " + ISSUE_TEXT[issue["kind"]].format(
+                slot=issue.get("slot"), name=player.get("name"),
+                status=injury.get("status"), gain=issue.get("gain")))
+        for change in league["changes"]:
+            out = change["out"]
+            print(f"      REIN {change['in']['name']} ({change['in']['pts_week']})"
+                  + (f"  RAUS {out['name']} ({out['pts_week']})" if out else ""))
+    return 0
+
+
 def show_draft(username, draft_id, sport, position=None):
     result = api_core.analyze_draft_api(username, draft_id, sport)
     if "error" in result:
@@ -108,6 +149,7 @@ def main():
                "  python assistant.py --username DEIN_NAME --waivers --league_id 1314778868896264192\n"
                "  python assistant.py --username DEIN_NAME --draft_id 1312142320203730944\n"
                "  python assistant.py --username DEIN_NAME --waivers --league_id ... --sport nba\n"
+               "  python assistant.py --username DEIN_NAME --overview\n"
                "  python assistant.py --update --sport nba",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -117,6 +159,8 @@ def main():
     parser.add_argument("--sport", default="nfl", choices=["nfl", "nba"], help="Sportart")
     parser.add_argument("--position", help="Board auf eine Position filtern (z. B. TE)")
     parser.add_argument("--waivers", action="store_true", help="Waiver-Assistent")
+    parser.add_argument("--overview", action="store_true",
+                        help="Aufstellungs-Check über alle Ligen der laufenden Saison")
     parser.add_argument("--update", action="store_true", help="Spieler- und Statsdaten aktualisieren")
 
     args = parser.parse_args()
@@ -132,6 +176,9 @@ def main():
         if not args.league_id:
             parser.error("--waivers benötigt --league_id")
         return show_waivers(args.username, args.league_id, args.sport)
+
+    if args.overview:
+        return show_overview(args.username, args.sport)
 
     if args.draft_id:
         return show_draft(args.username, args.draft_id, args.sport, args.position)

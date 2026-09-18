@@ -39,6 +39,17 @@ export type Player = {
   pts: number;
   /** Raw Sleeper season projection, before availability adjustments. */
   proj?: number | null;
+  /** This week's projected points, availability applied. Null off-season. */
+  pts_week?: number | null;
+  /** Points over this week and the following ones (see `WEEK_HORIZON`). */
+  pts_horizon?: number | null;
+  /** This week's opponent; null on bye or off-season. */
+  opp?: string | null;
+  bye?: boolean;
+  /** First bye week inside the horizon, if any. */
+  bye_week?: number | null;
+  /** His game this week is over: he can be neither started nor benched. */
+  locked?: boolean;
   score?: number;
   signals?: string[];
   injury?: Injury | null;
@@ -103,3 +114,42 @@ export type LineupSlot = {
 };
 
 export type LeagueInfo = { name?: string | null; teams?: number; season?: string | null };
+
+export type LineupChange = {
+  slot: string | null;
+  in: Player;
+  out: Player | null;
+};
+
+export type LineupIssue = {
+  kind: "empty" | "bye" | "out" | "doubtful" | "questionable" | "bench";
+  /** 3 scores nothing unless fixed, 2 likely costs points, 1 worth a look. */
+  severity: number;
+  slot: string | null;
+  player: Player | null;
+  gain?: number;
+};
+
+export type OverviewLeague = {
+  league_id: string;
+  name: string;
+  teams: number;
+  format: { best_ball: boolean; type: number | null };
+  skipped: "best_ball" | "not_in_season" | "no_roster" | null;
+  severity: number;
+  issues?: LineupIssue[];
+  changes?: LineupChange[];
+  current_total?: number;
+  total?: number;
+  gain?: number;
+};
+
+export type Overview = {
+  username: string;
+  sport: string;
+  season: string;
+  week: number | null;
+  /** Unix seconds. */
+  generated_at: number;
+  lineup: { leagues: OverviewLeague[] };
+};

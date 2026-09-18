@@ -16,6 +16,12 @@ ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("FSA_ALLOWED_ORIGINS", "*")
 # the scheduled job calls the updater directly and is unaffected either way.
 REFRESH_TOKEN_ENV = "FSA_REFRESH_TOKEN"
 
+# Sleeper usernames whose cross-league overview the scheduled job rebuilds.
+# Opt-in by configuration rather than on first request: one overview runs every
+# league a user has through the full model, and a public endpoint that did that
+# for any name it was given would be an open cost lever.
+SNAPSHOT_USERS = [u.strip() for u in os.environ.get("FSA_SNAPSHOT_USERS", "").split(",") if u.strip()]
+
 SEASON_FALLBACKS = ["2026", "2025", "2024"]
 
 
@@ -198,6 +204,12 @@ def update_data(req: https_fn.Request) -> https_fn.Response:
 
     sport = req.args.get("sport", "nfl")
     result = api_core.update_sleeper_data_api(sport)
+    if result.get("status") == "success" and sport == "nfl":
+        # The button is how a manager asks for fresh numbers now; the overview
+        # should not keep showing the old ones until the next scheduled run.
+        notes = [api_core.build_overview_snapshot(u, sport)["message"] for u in SNAPSHOT_USERS]
+        if notes:
+            result["message"] += " · " + " · ".join(notes)
     return _json(result, 200 if result.get("status") == "success" else 500, req)
 
 
@@ -240,6 +252,25 @@ def optimize_lineup(req: https_fn.Request) -> https_fn.Response:
 
 
 @https_fn.on_request(memory=512)
+def get_overview(req: https_fn.Request) -> https_fn.Response:
+    """The stored cross-league overview. Never computed on request."""
+    if req.method == 'OPTIONS':
+        return _preflight(req)
+
+    username = req.args.get("username")
+    sport = req.args.get("sport", "nfl")
+    if not username:
+        return _error("Missing username", 400, req)
+
+    snapshot = api_core.load_overview_snapshot(username, sport)
+    if not snapshot:
+        return _error(
+            "Für diesen Username gibt es noch keine Wochenübersicht. Sie wird nur für "
+            "Usernames berechnet, die in FSA_SNAPSHOT_USERS eingetragen sind.", 404, req)
+    return _json(snapshot, 200, req)
+
+
+@https_fn.on_request(memory=512)
 def analyze_draft(req: https_fn.Request) -> https_fn.Response:
     if req.method == 'OPTIONS':
         return _preflight(req)
@@ -258,15 +289,32 @@ def analyze_draft(req: https_fn.Request) -> https_fn.Response:
     return _json(result, 200, req)
 
 
-@scheduler_fn.on_schedule(schedule="0 6 * * *", timezone=scheduler_fn.Timezone("Europe/Berlin"),
+# Morning, noon and evening, Berlin time. Injury designations move all day long
+# - practice reports land in the afternoon, inactives on game day - and the
+# overview is only worth reading if it has seen them.
+@scheduler_fn.on_schedule(schedule="0 6,12,18 * * *", timezone=scheduler_fn.Timezone("Europe/Berlin"),
                           memory=512, timeout_sec=540)
 def refresh_data(event: scheduler_fn.ScheduledEvent) -> None:
-    """Daily snapshot refresh.
+    """Snapshot refresh, three times a day.
 
-    Injury designations and depth charts change every day, so a waiver
-    recommendation is only as good as the freshness of the player data. The
-    manual button remains for ad-hoc refreshes.
+    NFL data and every configured user's overview on each run. The NBA has no
+    overview and no weekly model, so once a day in the morning is enough.
     """
-    for sport in ("nfl", "nba"):
-        result = api_core.update_sleeper_data_api(sport)
-        print(f"[{sport}] {result.get('message')}")
+    result = api_core.update_sleeper_data_api("nfl")
+    print(f"[nfl] {result.get('message')}")
+    for username in SNAPSHOT_USERS:
+        print(f"[overview] {api_core.build_overview_snapshot(username, 'nfl')['message']}")
+
+    if _berlin_hour(event) < 9:
+        result = api_core.update_sleeper_data_api("nba")
+        print(f"[nba] {result.get('message')}")
+
+
+def _berlin_hour(event):
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+        when = getattr(event, "schedule_time", None) or datetime.now(ZoneInfo("UTC"))
+        return when.astimezone(ZoneInfo("Europe/Berlin")).hour
+    except Exception:
+        return 6  # when in doubt, refresh

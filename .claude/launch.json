@@ -7,6 +7,12 @@
       "runtimeArgs": ["run", "--prefix", "frontend", "dev"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "functions",
+      "runtimeExecutable": "firebase",
+      "runtimeArgs": ["emulators:start", "--only", "functions", "--project", "demo-no-project"],
+      "port": 5001
     }
   ]
 }

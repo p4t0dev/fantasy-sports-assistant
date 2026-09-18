@@ -29,6 +29,9 @@ stats_*.json
 projections_*.json
 college_stats.json
 
+# Per-user overview snapshots: built by the scheduled job, and personal.
+overview_*.json
+
 # Packaged skill archives
 *.zip
 
