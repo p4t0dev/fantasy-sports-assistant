@@ -39,8 +39,15 @@ export type Player = {
   pts: number;
   /** Raw Sleeper season projection, before availability adjustments. */
   proj?: number | null;
-  /** This week's projected points, availability applied. Null off-season. */
+  /** This week's forecast (see `Forecast`), availability applied. Null off-season. */
   pts_week?: number | null;
+  /** Sleeper's projection for this week as it came, availability applied -
+   *  what `pts_week` is compared against. */
+  pts_week_base?: number | null;
+  /** How `pts_week` came about, factor by factor. */
+  forecast?: Forecast | null;
+  /** What his team has been doing with him: snaps, rank, points per week. */
+  usage?: Usage | null;
   /** Points over this week and the following ones (see `WEEK_HORIZON`). */
   pts_horizon?: number | null;
   /** This week's opponent; null on bye or off-season. */
@@ -61,6 +68,76 @@ export type Player = {
   protected?: string | null;
   is_liability?: boolean;
   faab?: Faab | null;
+};
+
+/** The weekly forecast P = B × K × A (functions/forecast.py). */
+export type Forecast = {
+  P: number;
+  /** Base: weighted mean of Sleeper (S), form (F) and quality (Q). */
+  B: number;
+  /** Corrections R × M × W, bounded. */
+  K: number;
+  /** Availability. */
+  A: number;
+  S: number | null;
+  F: number | null;
+  /** Games behind F. */
+  n: number;
+  Q: number | null;
+  weights: { S: number; F: number; Q: number };
+  R: number;
+  M: number;
+  W: number;
+  /** The forecast as readable lines, last one "Prognose …". */
+  explain: string[];
+};
+
+export type Usage = {
+  label: string;
+  adj: number;
+  rank: number | null;
+  snap_pct: number | null;
+  avg_pts: number;
+  pts_by_week: Record<string, number>;
+};
+
+export type ForecastNote = {
+  name: string;
+  pos: string;
+  starting: boolean;
+  pts_week: number;
+  pts_week_base: number;
+  explain: string[];
+};
+
+export type CloseCall = { in: string; out: string; gap: number };
+
+export type ForecastParams = { k: number; cap: number; s_share: number; beta: number; alpha: number };
+
+export type ForecastModel = {
+  params: Record<string, ForecastParams>;
+  backtest: {
+    season: string;
+    league: string;
+    results: Record<string, {
+      params: ForecastParams;
+      n: number;
+      pairs: number;
+      sleeper: { mae: number; pairs: number };
+      model: { mae: number; pairs: number };
+      verdict: string;
+    }>;
+  } | null;
+  form_games: number;
+  form_without_s: number;
+  limits: {
+    k_min: number; k_max: number; role_max: number; matchup_max: number;
+    matchup_shrink: number; vegas_weight: number; close_call: number;
+  };
+  weather: {
+    wind_strong: number; wind_severe: number; rain_heavy: number;
+    effect: Record<string, [number, number, number]>;
+  };
 };
 
 export type Faab = { min: number; max: number; tier: string; budget_left: number };
@@ -139,6 +216,8 @@ export type OverviewLeague = {
   severity: number;
   issues?: LineupIssue[];
   changes?: LineupChange[];
+  forecast_notes?: ForecastNote[];
+  close_calls?: CloseCall[];
   current_total?: number;
   total?: number;
   gain?: number;

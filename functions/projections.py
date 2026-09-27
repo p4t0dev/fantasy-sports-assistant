@@ -32,6 +32,8 @@ import urllib.request
 import urllib.parse
 
 BASE_URL = "https://api.sleeper.com/projections"
+# Actual box scores, on the same row schema as the projections.
+STATS_URL = "https://api.sleeper.com/stats"
 
 # Positions worth asking for. The endpoint takes repeated position[] params and
 # silently returns nothing for a sport/position combination it does not know.
@@ -49,19 +51,24 @@ _AGGREGATE_GP = 5
 
 def season_factor(p_stats, sport="nfl"):
     """Multiplier that turns one projection row into a season total."""
+    if sport == "nfl":
+        # Always season totals - team defenses included, which ship `gp: 1`
+        # next to 45 sacks. Read as a per-game row, every defense's season
+        # came out seventeen times too large.
+        return 1.0
     gp = (p_stats or {}).get("gp") or 0
     if gp >= _AGGREGATE_GP:
         return 1.0
     return float(SEASON_GAMES.get(sport, 17))
 
 
-def _fetch_rows(sport, path):
+def _fetch_rows(sport, path, base=BASE_URL, positions=None):
     """Raw projection rows for one endpoint path, or None on any failure."""
-    positions = POSITIONS.get(sport) or POSITIONS["nfl"]
+    positions = positions or POSITIONS.get(sport) or POSITIONS["nfl"]
     query = urllib.parse.urlencode(
         [("season_type", "regular")] + [("position[]", p) for p in positions]
     )
-    url = f"{BASE_URL}/{sport}/{path}?{query}"
+    url = f"{base}/{sport}/{path}?{query}"
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -123,3 +130,30 @@ def fetch_week_projections(sport, season, week):
         stats[str(pid)] = {k: v for k, v in p_stats.items()
                            if not k.startswith(_DROP_PREFIXES)}
     return {"stats": stats, "opp": opp, "date": date}
+
+
+def fetch_week_stats(sport, season, week):
+    """What actually happened in one played week: {pid: {team, stats}}.
+
+    Every position, IDP, kickers and defenses included: what a player actually
+    scored is the first thing to check against a projection, whatever his
+    position. Stats rows carry the full box score, so they are scored through
+    the league's own settings just like the projections. Returns None when the fetch failed.
+    """
+    rows = _fetch_rows(sport, f"{season}/{week}", base=STATS_URL)
+    if rows is None:
+        return None
+    out = {}
+    for row in rows:
+        pid = row.get("player_id")
+        p_stats = row.get("stats")
+        if pid is None or not p_stats or not p_stats.get("gp"):
+            continue  # did not play: nothing to score, nothing to read a role off
+        out[str(pid)] = {
+            "team": row.get("team"),
+            "opp": row.get("opponent"),
+            "stats": {k: v for k, v in p_stats.items()
+                      if not k.startswith(_DROP_PREFIXES) and not k.startswith("pts_")
+                      and "rank" not in k and v},
+        }
+    return out

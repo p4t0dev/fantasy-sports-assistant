@@ -1,0 +1,146 @@
+{
+  "season": "2025",
+  "league": "NFL SUPERFANS",
+  "results": {
+    "QB": {
+      "params": {
+        "k": 4.0,
+        "cap": 0.0,
+        "s_share": 1.0,
+        "beta": 0.0,
+        "alpha": 0.0
+      },
+      "n": 247,
+      "pairs": 2343,
+      "sleeper": {
+        "mae": 8.28,
+        "pairs": 0.5621
+      },
+      "model": {
+        "mae": 8.28,
+        "pairs": 0.5621
+      },
+      "verdict": "nur Sleeper"
+    },
+    "RB": {
+      "params": {
+        "k": 32.0,
+        "cap": 0.15,
+        "s_share": 1.0,
+        "beta": 0.0,
+        "alpha": 0.0
+      },
+      "n": 508,
+      "pairs": 7483,
+      "sleeper": {
+        "mae": 5.61,
+        "pairs": 0.6102
+      },
+      "model": {
+        "mae": 5.583,
+        "pairs": 0.6153
+      },
+      "verdict": "Modell"
+    },
+    "WR": {
+      "params": {
+        "k": 4.0,
+        "cap": 0.0,
+        "s_share": 1.0,
+        "beta": 0.0,
+        "alpha": 0.0
+      },
+      "n": 813,
+      "pairs": 21782,
+      "sleeper": {
+        "mae": 5.352,
+        "pairs": 0.6048
+      },
+      "model": {
+        "mae": 5.352,
+        "pairs": 0.6048
+      },
+      "verdict": "nur Sleeper"
+    },
+    "TE": {
+      "params": {
+        "k": 32.0,
+        "cap": 0.15,
+        "s_share": 0.5,
+        "beta": 0.0,
+        "alpha": 0.5
+      },
+      "n": 437,
+      "pairs": 5845,
+      "sleeper": {
+        "mae": 5.362,
+        "pairs": 0.5921
+      },
+      "model": {
+        "mae": 5.181,
+        "pairs": 0.5979
+      },
+      "verdict": "Modell"
+    },
+    "K": {
+      "params": {
+        "k": 4.0,
+        "cap": 0.0,
+        "s_share": 1.0,
+        "beta": 0.0,
+        "alpha": 0.0
+      },
+      "n": 243,
+      "pairs": 3332,
+      "sleeper": {
+        "mae": 3.07,
+        "pairs": 0.5633
+      },
+      "model": {
+        "mae": 3.07,
+        "pairs": 0.5633
+      },
+      "verdict": "nur Sleeper"
+    },
+    "DEF": {
+      "params": {
+        "k": 4.0,
+        "cap": 0.0,
+        "s_share": 1.0,
+        "beta": 0.0,
+        "alpha": 0.0
+      },
+      "n": 246,
+      "pairs": 3251,
+      "sleeper": {
+        "mae": 3.451,
+        "pairs": 0.5727
+      },
+      "model": {
+        "mae": 3.451,
+        "pairs": 0.5727
+      },
+      "verdict": "nur Sleeper"
+    },
+    "IDP": {
+      "params": {
+        "k": 2.0,
+        "cap": 0.5,
+        "s_share": 0.5,
+        "beta": 0.0,
+        "alpha": 0.0
+      },
+      "n": 3519,
+      "pairs": 30000,
+      "sleeper": {
+        "mae": 5.164,
+        "pairs": 0.6007
+      },
+      "model": {
+        "mae": 4.934,
+        "pairs": 0.6255
+      },
+      "verdict": "Modell"
+    }
+  }
+}

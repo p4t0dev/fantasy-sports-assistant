@@ -59,6 +59,40 @@ abgeschlagen, `Questionable` **nicht**: die meisten spielen, und ob dieser
 spielt, steht vor dem Kickoff fest. Der 20-%-Saisonabschlag bänkte Joe Burrow
 für Tyler Shough; jetzt ist `Questionable` ein Hinweis im Aufstellungs-Check.
 
+**Wochenprognose (`forecast`)** — `pts_week` ist nicht mehr Sleepers Zahl,
+sondern `P = B × K × A` aus `functions/forecast.py`:
+
+```
+B = g_S·S + g_F·F + g_Q·Q     Sleeper-Woche, Form (Ø letzte 4 Spiele), Qualität
+K = R × M × W  ∈ [0.75, 1.25] Rolle, Matchup (Gegner + Vegas), Wetter
+A                              Verfügbarkeit (Out 0, Doubtful abgeschlagen)
+```
+
+Die Gewichte sind **gemessen**: `tools/backtest_forecast.py` rechnet die
+Saison 2025 Woche für Woche nur mit dem, was vor dem Spiel bekannt war,
+fittet auf den Wochen 3–10 die Paar-Entscheidungen („von zwei Spielern, die
+Sleeper ≤ 5 Punkte trennt, wer liegt vorn?“) und prüft auf 11–18. Schlägt
+das Modell Sleeper dort nicht, gilt für die Position Sleeper allein — Stand
+2025: Modell bei IDP, TE, RB; Sleeper bei QB, WR, K, DEF; Rolle β = 0
+überall. Ergebnis in `functions/data/forecast_params.json`, neu fitten mit
+
+```bash
+python3 tools/backtest_forecast.py --league_id <ID> --fit --out functions/data/forecast_params.json
+```
+
+Jeder Faktor liefert seinen Erklärsatz mit; die App zeigt ihn unter jedem
+Spieler, `pts_week_base` ist Sleepers Zahl zum Vergleich, und `/prognose`
+erklärt das Modell aus dem Endpunkt `forecast_model` — also immer das, das
+gerade rechnet. Fehlt Sleepers Wochenzeile für einen gesunden Spieler, dessen
+Team spielt, rechnet die Basis aus Form und Qualität statt mit 0.
+
+Daten: Box-Scores aller gespielten Wochen (`stats_nfl_<saison>_weekly.json`,
+alle Positionen, mit Gegner), Wetter von Open-Meteo (mittlerer Wind und
+stärkster Niederschlag im Spielfenster, Dach = kein Wetter) und Vegas-Linien
+von The Odds API (`gameday_nfl_<saison>_w<woche>.json`). Die Nutzungsdaten
+(`functions/usage.py`: Snaps, Rang in der Positionsgruppe, „WR3 → WR2“)
+stehen als Information beim Spieler.
+
 **Gesperrte Spieler** — ist das Spiel eines Spielers vorbei (Spieldatum vor
 heute, US-Zeit), bleibt er, wo er ist: ein Starter behält Platz und Punkte, ein
 Bankspieler kann nicht mehr rein. Optimiert wird nur der Rest. Eine
@@ -261,11 +295,19 @@ Firebase-Projekt einmalig zuordnen (legt `.firebaserc` an):
 firebase use --add
 ```
 
-Danach bauen und deployen:
+Danach bauen und deployen — mit einem Befehl, der auch das Secret
+`ODDS_API_KEY` anlegt, falls es fehlt, und vorher die Tests laufen lässt:
 
 ```bash
-npm run build --prefix frontend && firebase deploy
+tools/deploy.sh
 ```
+
+### Version
+
+Schema `0.<PR>.<Patch>`: die mittlere Zahl ist der Pull Request, der die
+Version ausgeliefert hat (`frontend/package.json`, Übersicht in
+`CHANGELOG.md`). Der Footer jeder Seite zeigt Version, PR-Link und Commit.
+Jeder PR, der ausgeliefert wird, setzt die Version auf seine Nummer.
 
 `firebase.json` liefert `frontend/out` aus; `next.config.ts` erzeugt dieses
 Verzeichnis über `output: "export"`. Python Cloud Functions sind gen2 und
@@ -298,6 +340,15 @@ eine Übersicht rechnet jede Liga eines Users durchs volle Modell, und ein
 öffentlicher Endpunkt, der das für jeden übergebenen Namen täte, wäre dieselbe
 offene Kostenquelle. Der Button „Daten aktualisieren“ baut die Übersichten nach
 dem Refresh ebenfalls neu.
+
+`ODDS_API_KEY` (The Odds API, für die Vegas-Linien) ist ein Secret und muss
+**vor dem Deploy** existieren, sonst schlägt der Deploy fehl:
+
+```bash
+firebase functions:secrets:set ODDS_API_KEY
+```
+
+Ohne Linien rechnet das Matchup nur mit den erlaubten Punkten des Gegners.
 
 `FSA_ALLOWED_ORIGINS` und `FSA_SNAPSHOT_USERS` stehen in `functions/.env`. Diese Datei ist **gitignored** —
 nach einem frischen Clone muss sie aus `functions/.env.example` neu angelegt

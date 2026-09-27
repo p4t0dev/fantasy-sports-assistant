@@ -99,6 +99,24 @@ def show_overview(username, sport):
             out = change["out"]
             print(f"      REIN {change['in']['name']} ({change['in']['pts_week']})"
                   + (f"  RAUS {out['name']} ({out['pts_week']})" if out else ""))
+            for player in (change["in"], out):
+                if not player:
+                    continue
+                print(f"           {player['name']}:")
+                for line in (player.get("forecast") or {}).get("explain") or []:
+                    print(f"             {line}")
+                label = (player.get("usage") or {}).get("label")
+                if label:
+                    print(f"             Nutzung {label}")
+        for call in league.get("close_calls") or []:
+            print(f"      KNAPP: {call['in']} vs. {call['out']} ({call['gap']:+} Pkt) - Münzwurf, "
+                  "entscheide nach Gefühl oder Matchup")
+        notes = [n for n in league.get("forecast_notes") or [] if n["starting"]]
+        if notes:
+            print("      Starter, bei denen die Prognose von Sleeper abweicht:")
+        for note in notes:
+            print(f"        {note['name']} ({note['pos']}) Sleeper {note['pts_week_base']} -> "
+                  f"{note['pts_week']}: " + " | ".join(note["explain"][:-1]))
     return 0
 
 

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import Link from "next/link";
 import UpdateDataButton from "@/components/UpdateDataButton";
+import VersionFooter from "@/components/VersionFooter";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
@@ -33,12 +34,20 @@ export default function RootLayout({
                 </Link>
 
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 sm:gap-4">
                 <Link
                   href="/overview"
-                  className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
+                  className="text-xs sm:text-sm font-medium text-gray-300 hover:text-white transition-colors"
                 >
-                  Wochenübersicht
+                  <span className="sm:hidden">Woche</span>
+                  <span className="hidden sm:inline">Wochenübersicht</span>
+                </Link>
+                <Link
+                  href="/prognose"
+                  className="text-xs sm:text-sm font-medium text-gray-300 hover:text-white transition-colors"
+                >
+                  <span className="sm:hidden">Modell</span>
+                  <span className="hidden sm:inline">Prognose-Modell</span>
                 </Link>
                 <UpdateDataButton />
               </div>
@@ -49,6 +58,7 @@ export default function RootLayout({
         <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
           {children}
         </main>
+        <VersionFooter />
       </body>
     </html>
   );

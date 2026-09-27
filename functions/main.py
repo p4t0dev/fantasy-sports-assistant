@@ -186,7 +186,10 @@ def analyze_waivers(req: https_fn.Request) -> https_fn.Response:
     return _json(result, 200, req)
 
 
-@https_fn.on_request(memory=512, timeout_sec=300, secrets=["FSA_REFRESH_TOKEN"])
+# ODDS_API_KEY: The Odds API, for the Vegas lines in the weekly forecast. A
+# secret, not an env var - it is a paid account. Must exist before deploying:
+# firebase functions:secrets:set ODDS_API_KEY
+@https_fn.on_request(memory=512, timeout_sec=300, secrets=["FSA_REFRESH_TOKEN", "ODDS_API_KEY"])
 def update_data(req: https_fn.Request) -> https_fn.Response:
     if req.method == 'OPTIONS':
         return _preflight(req)
@@ -270,6 +273,14 @@ def get_overview(req: https_fn.Request) -> https_fn.Response:
     return _json(snapshot, 200, req)
 
 
+@https_fn.on_request(memory=256)
+def forecast_model(req: https_fn.Request) -> https_fn.Response:
+    """Weights, backtest and rules of the weekly forecast, for the explanation page."""
+    if req.method == 'OPTIONS':
+        return _preflight(req)
+    return _json(api_core.forecast_model_api(), 200, req)
+
+
 @https_fn.on_request(memory=512)
 def analyze_draft(req: https_fn.Request) -> https_fn.Response:
     if req.method == 'OPTIONS':
@@ -293,7 +304,7 @@ def analyze_draft(req: https_fn.Request) -> https_fn.Response:
 # - practice reports land in the afternoon, inactives on game day - and the
 # overview is only worth reading if it has seen them.
 @scheduler_fn.on_schedule(schedule="0 6,12,18 * * *", timezone=scheduler_fn.Timezone("Europe/Berlin"),
-                          memory=512, timeout_sec=540)
+                          memory=512, timeout_sec=540, secrets=["ODDS_API_KEY"])
 def refresh_data(event: scheduler_fn.ScheduledEvent) -> None:
     """Snapshot refresh, three times a day.
 
