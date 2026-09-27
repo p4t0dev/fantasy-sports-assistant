@@ -14,6 +14,7 @@ import {
   MatchupBadge,
   startPts,
 } from "@/components/PlayerBadges";
+import { ForecastDelta, ForecastDetail } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
 
 type LineupData = {
@@ -29,6 +30,7 @@ type LineupData = {
   total: number;
   empty: string[];
   warnings: { slot: string; player: string; injury: Injury }[];
+  close_calls?: { in: string; out: string; gap: number }[];
   positions: string[];
 };
 
@@ -96,10 +98,12 @@ function SeatRow({
                 {backup && <span className="text-gray-600"> · Backup: {backup}</span>}
               </div>
               <SignalBadges player={optimal} />
+              <ForecastDetail player={optimal} />
             </div>
             <div className="flex flex-col items-end shrink-0">
               <span className="text-sm font-bold text-blue-300">{startPts(optimal)}</span>
               <span className="text-[10px] text-gray-500 uppercase tracking-wider">{unit}</span>
+              <ForecastDelta player={optimal} />
             </div>
           </div>
         ) : (
@@ -166,16 +170,17 @@ function HowItWorks({
           <p className="mb-2">
             {week ? (
               <>
-                Während der Saison zählt die <strong className="text-white">Prognose
-                für Woche {week}</strong>, nicht die Saisonprognose: eine Aufstellung
-                wird für ein Spiel gesetzt. Gegner und Bye-Wochen stecken darin — ein
-                Spieler im Bye projiziert 0. Wer diese Woche <em>Out</em> ist, bekommt
-                ebenfalls 0, <em>Doubtful</em> wird abgeschlagen. <em>Questionable</em>{" "}
-                bleibt ohne Abschlag: die meisten spielen, und ob dieser spielt, steht
-                vor dem Kickoff fest — nicht am Freitag. Solche Starter stehen oben als
-                Warnung. Spieler, deren Spiel schon gelaufen ist
-                (<span className="text-gray-400">🔒 gespielt</span>), bleiben, wo sie
-                sind: sie können weder rein noch raus, optimiert wird nur der Rest.
+                Jede Zahl ist unsere <strong className="text-white">Prognose für
+                Woche {week}</strong>: Sleepers Wochenprognose, gemischt mit der
+                Form der letzten Spiele und der generellen Qualität des Spielers,
+                korrigiert um Gegner und Wetter — so weit das im Backtest auf der
+                Saison 2025 bessere Entscheidungen gebracht hat. Wo nicht, bleibt
+                es bei Sleeper. Weicht die Prognose von Sleeper ab, steht Sleepers
+                Zahl klein daneben; unter jedem Spieler lässt sich aufklappen,
+                wie seine Zahl zustande kommt.{" "}
+                <Link href="/prognose" className="text-blue-400 hover:text-blue-300">
+                  Das ganze Modell →
+                </Link>
               </>
             ) : (
               <>Außerhalb der Saison gibt es keine Wochenprognose — dann zählt die
@@ -183,15 +188,12 @@ function HowItWorks({
             )}
           </p>
           <p>
-            Sleeper veröffentlicht die Prognosen pro Spieler — im selben
-            Stat-Schema wie die echten Statistiken (<code className="text-blue-300">pass_yd</code>,{" "}
-            <code className="text-blue-300">reb</code>, <code className="text-blue-300">idp_tkl_solo</code>{" "}
-            …). Diese Rohwerte laufen durch das <em>Scoring deiner Liga</em>, nicht
-            durch ein zweites Modell: eine 0.5-PPR-Liga und eine Full-PPR-Liga
-            bekommen aus derselben Prognose verschiedene Punkte. Danach greift
-            nur noch der Verletzungsabschlag — eine Meldung von heute ist jünger
-            als die Prognose. Depth-Chart- und Teamstärke-Faktoren entfallen
-            bewusst, weil Sleeper beides bereits eingepreist hat.
+            Bye ergibt 0, <em>Out</em> ebenfalls, <em>Doubtful</em> wird
+            abgeschlagen. <em>Questionable</em> bleibt ohne Abschlag: die meisten
+            spielen, und ob dieser spielt, steht vor dem Kickoff fest. Spieler,
+            deren Spiel schon gelaufen ist (<span className="text-gray-400">🔒
+            gespielt</span>), bleiben, wo sie sind; optimiert wird nur der Rest.
+            Alle Punkte laufen durch das <em>Scoring deiner Liga</em>.
           </p>
         </div>
 
@@ -476,6 +478,13 @@ function LineupContent() {
                 )}
               </div>
             ))}
+            {(data?.close_calls ?? []).map((c, i) => (
+              <p key={`cc-${i}`} className="text-xs text-yellow-300/90">
+                Knapp: {c.in} vs. {c.out} ({c.gap > 0 ? "+" : ""}
+                {c.gap} Pkt) — unter {1.5} Punkten ist das ein Münzwurf. Entscheide nach
+                Matchup oder Bauchgefühl.
+              </p>
+            ))}
             <p className="text-xs text-gray-500 pt-1">
               Rein und Raus sind wo möglich im selben Slot gepaart, sonst über
               Positionen hinweg — entscheidend ist die Menge, nicht das einzelne
@@ -565,8 +574,12 @@ function LineupContent() {
                     )}
                   </div>
                   <SignalBadges player={p} />
+                  <ForecastDetail player={p} />
                 </div>
-                <span className="text-sm font-bold text-blue-300 shrink-0">{startPts(p)}</span>
+                <div className="flex flex-col items-end shrink-0">
+                  <span className="text-sm font-bold text-blue-300">{startPts(p)}</span>
+                  <ForecastDelta player={p} />
+                </div>
               </div>
             ))}
             {bench.length === 0 && (

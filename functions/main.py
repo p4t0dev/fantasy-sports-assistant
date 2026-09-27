@@ -273,6 +273,14 @@ def get_overview(req: https_fn.Request) -> https_fn.Response:
     return _json(snapshot, 200, req)
 
 
+@https_fn.on_request(memory=256)
+def forecast_model(req: https_fn.Request) -> https_fn.Response:
+    """Weights, backtest and rules of the weekly forecast, for the explanation page."""
+    if req.method == 'OPTIONS':
+        return _preflight(req)
+    return _json(api_core.forecast_model_api(), 200, req)
+
+
 @https_fn.on_request(memory=512)
 def analyze_draft(req: https_fn.Request) -> https_fn.Response:
     if req.method == 'OPTIONS':

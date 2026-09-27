@@ -6,6 +6,7 @@ import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import type { LineupIssue, Overview, OverviewLeague, Player } from "@/lib/types";
 import { InjuryBadge, MatchupBadge, PosBadge, startPts } from "@/components/PlayerBadges";
+import { ForecastDelta, ForecastDetail } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
 import {
   subscribeToSearch,
@@ -70,13 +71,19 @@ function issueText(issue: LineupIssue): React.ReactNode {
 
 function PlayerLine({ player, tone }: { player: Player; tone: string }) {
   return (
-    <div className="flex items-center justify-between gap-2 text-sm">
-      <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
-        <PosBadge pos={player.pos} />
-        <span className={`${tone} truncate`}>{player.name}</span>
-        <MatchupBadge player={player} />
-      </span>
-      <span className="text-gray-400 font-medium shrink-0">{startPts(player)}</span>
+    <div className="text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
+          <PosBadge pos={player.pos} />
+          <span className={`${tone} truncate`}>{player.name}</span>
+          <MatchupBadge player={player} />
+        </span>
+        <span className="flex flex-col items-end shrink-0">
+          <span className="text-gray-400 font-medium">{startPts(player)}</span>
+          <ForecastDelta player={player} />
+        </span>
+      </div>
+      <ForecastDetail player={player} />
     </div>
   );
 }
@@ -94,6 +101,7 @@ function LeagueCard({
   const changes = league.changes ?? [];
   const incoming = changes.map((c) => c.in);
   const outgoing = changes.map((c) => c.out).filter((p): p is Player => p !== null);
+  const starterNotes = (league.forecast_notes ?? []).filter((n) => n.starting);
 
   return (
     <div className={`glass-panel p-5 border-l-4 ${tone.border} space-y-4`}>
@@ -140,6 +148,44 @@ function LeagueCard({
             )}
           </div>
         </div>
+      )}
+
+      {(league.close_calls ?? []).length > 0 && (
+        <ul className="space-y-1 text-xs text-yellow-300/90">
+          {(league.close_calls ?? []).map((c, i) => (
+            <li key={i}>
+              Knapp: {c.in} vs. {c.out} ({c.gap > 0 ? "+" : ""}
+              {c.gap} Pkt) — ein Münzwurf, entscheide nach Matchup oder Bauchgefühl.
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {starterNotes.length > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer list-none select-none text-gray-400 hover:text-gray-200">
+            ▸ {starterNotes.length} Starter, bei denen unsere Prognose von Sleeper abweicht
+          </summary>
+          <ul className="mt-2 space-y-2">
+            {starterNotes.map((n) => (
+              <li key={n.name} className="rounded-md border border-gray-800 bg-gray-900/60 p-2">
+                <div className="flex items-center gap-1.5 text-gray-200">
+                  <PosBadge pos={n.pos} />
+                  {n.name}
+                  <span className="ml-auto text-gray-500">
+                    Sleeper {n.pts_week_base.toFixed(1)} →{" "}
+                    <span className="text-white font-medium">{n.pts_week.toFixed(1)}</span>
+                  </span>
+                </div>
+                <ul className="mt-1 text-gray-400">
+                  {n.explain.slice(0, -1).map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
 
       <div className="flex justify-end">

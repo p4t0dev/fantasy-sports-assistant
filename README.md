@@ -59,22 +59,39 @@ abgeschlagen, `Questionable` **nicht**: die meisten spielen, und ob dieser
 spielt, steht vor dem Kickoff fest. Der 20-%-Saisonabschlag bänkte Joe Burrow
 für Tyler Shough; jetzt ist `Questionable` ein Hinweis im Aufstellungs-Check.
 
-**Nutzung und Rolle (`usage`)** — die Wochenprognose ist Sleepers Zahl, und
-das Modell hatte bisher nichts Eigenes dagegenzuhalten: ein Back, der in Woche 2
-das Backfield übernommen hat, sah aus wie vor der Saison. Die Depth Chart
-bewegte sich nur, wenn der Vordermann verletzt war, und erzielte Punkte
-erreichten die Aufstellung nie. `functions/usage.py` liest aus den Box-Scores
-der gespielten Wochen (`stats_nfl_<saison>_weekly.json`) Snap-Anteil, Touches
-und Targets und rankt jeden Spieler innerhalb der Positionsgruppe seines Teams
-(„WR3 → WR2“). Daraus wird `pts_week` um höchstens ±10 % korrigiert
-(`pts_week_base` bleibt die unkorrigierte Prognose): +/−5 % je Platz auf- oder
-abwärts, 0.4 % je Prozentpunkt Snap-Anteil gegenüber den früheren Spielen.
-Punkte gehen **nicht** ein — nach zwei Spielen ist ein langer Touchdown die
-halbe Saison; sie stehen nur im Label. Nicht korrigiert wird bei nur einem
-Spiel, bei Quarterbacks, bei gesperrten Spielern, bei einem Spieler, dessen
-letztes Spiel nicht das letzte seines Teams war, und bei einem Aufstieg, der
-nur Vertretung war (der Vordermann fehlte und ist jetzt wieder fit). Ohne
-Box-Scores ist jede Korrektur 1.0.
+**Wochenprognose (`forecast`)** — `pts_week` ist nicht mehr Sleepers Zahl,
+sondern `P = B × K × A` aus `functions/forecast.py`:
+
+```
+B = g_S·S + g_F·F + g_Q·Q     Sleeper-Woche, Form (Ø letzte 4 Spiele), Qualität
+K = R × M × W  ∈ [0.75, 1.25] Rolle, Matchup (Gegner + Vegas), Wetter
+A                              Verfügbarkeit (Out 0, Doubtful abgeschlagen)
+```
+
+Die Gewichte sind **gemessen**: `tools/backtest_forecast.py` rechnet die
+Saison 2025 Woche für Woche nur mit dem, was vor dem Spiel bekannt war,
+fittet auf den Wochen 3–10 die Paar-Entscheidungen („von zwei Spielern, die
+Sleeper ≤ 5 Punkte trennt, wer liegt vorn?“) und prüft auf 11–18. Schlägt
+das Modell Sleeper dort nicht, gilt für die Position Sleeper allein — Stand
+2025: Modell bei IDP, TE, RB; Sleeper bei QB, WR, K, DEF; Rolle β = 0
+überall. Ergebnis in `functions/data/forecast_params.json`, neu fitten mit
+
+```bash
+python3 tools/backtest_forecast.py --league_id <ID> --fit --out functions/data/forecast_params.json
+```
+
+Jeder Faktor liefert seinen Erklärsatz mit; die App zeigt ihn unter jedem
+Spieler, `pts_week_base` ist Sleepers Zahl zum Vergleich, und `/prognose`
+erklärt das Modell aus dem Endpunkt `forecast_model` — also immer das, das
+gerade rechnet. Fehlt Sleepers Wochenzeile für einen gesunden Spieler, dessen
+Team spielt, rechnet die Basis aus Form und Qualität statt mit 0.
+
+Daten: Box-Scores aller gespielten Wochen (`stats_nfl_<saison>_weekly.json`,
+alle Positionen, mit Gegner), Wetter von Open-Meteo (mittlerer Wind und
+stärkster Niederschlag im Spielfenster, Dach = kein Wetter) und Vegas-Linien
+von The Odds API (`gameday_nfl_<saison>_w<woche>.json`). Die Nutzungsdaten
+(`functions/usage.py`: Snaps, Rang in der Positionsgruppe, „WR3 → WR2“)
+stehen als Information beim Spieler.
 
 **Gesperrte Spieler** — ist das Spiel eines Spielers vorbei (Spieldatum vor
 heute, US-Zeit), bleibt er, wo er ist: ein Starter behält Platz und Punkte, ein
@@ -315,6 +332,15 @@ eine Übersicht rechnet jede Liga eines Users durchs volle Modell, und ein
 öffentlicher Endpunkt, der das für jeden übergebenen Namen täte, wäre dieselbe
 offene Kostenquelle. Der Button „Daten aktualisieren“ baut die Übersichten nach
 dem Refresh ebenfalls neu.
+
+`ODDS_API_KEY` (The Odds API, für die Vegas-Linien) ist ein Secret und muss
+**vor dem Deploy** existieren, sonst schlägt der Deploy fehl:
+
+```bash
+firebase functions:secrets:set ODDS_API_KEY
+```
+
+Ohne Linien rechnet das Matchup nur mit den erlaubten Punkten des Gegners.
 
 `FSA_ALLOWED_ORIGINS` und `FSA_SNAPSHOT_USERS` stehen in `functions/.env`. Diese Datei ist **gitignored** —
 nach einem frischen Clone muss sie aus `functions/.env.example` neu angelegt

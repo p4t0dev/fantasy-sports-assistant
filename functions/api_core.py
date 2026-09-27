@@ -2272,6 +2272,26 @@ def _league_format(league):
     }
 
 
+def forecast_model_api():
+    """The forecast model as it runs right now: fitted weights, the backtest
+    they came from, and the fixed limits and weather rules. The app's
+    explanation page is built from this, so it can never describe a model
+    other than the one producing the numbers."""
+    return {
+        "params": forecast.PARAMS,
+        "backtest": forecast.BACKTEST,
+        "form_games": forecast.FORM_GAMES,
+        "form_without_s": forecast.FORM_WITHOUT_S,
+        "limits": {"k_min": forecast.K_MIN, "k_max": forecast.K_MAX,
+                   "role_max": forecast.ROLE_MAX, "matchup_max": forecast.MATCHUP_MAX,
+                   "matchup_shrink": forecast.MATCHUP_SHRINK,
+                   "vegas_weight": forecast.VEGAS_WEIGHT,
+                   "close_call": forecast.CLOSE_CALL},
+        "weather": {"wind_strong": forecast.WIND_STRONG, "wind_severe": forecast.WIND_SEVERE,
+                    "rain_heavy": forecast.RAIN_HEAVY, "effect": forecast.WEATHER_EFFECT},
+    }
+
+
 def lineup_overview_api(username, sport="nfl"):
     """The lineup check for every league the user is in this season.
 

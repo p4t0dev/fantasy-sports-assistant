@@ -33,12 +33,20 @@ export default function RootLayout({
                 </Link>
 
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 sm:gap-4">
                 <Link
                   href="/overview"
-                  className="text-sm font-medium text-gray-300 hover:text-white transition-colors"
+                  className="text-xs sm:text-sm font-medium text-gray-300 hover:text-white transition-colors"
                 >
-                  Wochenübersicht
+                  <span className="sm:hidden">Woche</span>
+                  <span className="hidden sm:inline">Wochenübersicht</span>
+                </Link>
+                <Link
+                  href="/prognose"
+                  className="text-xs sm:text-sm font-medium text-gray-300 hover:text-white transition-colors"
+                >
+                  <span className="sm:hidden">Modell</span>
+                  <span className="hidden sm:inline">Prognose-Modell</span>
                 </Link>
                 <UpdateDataButton />
               </div>
