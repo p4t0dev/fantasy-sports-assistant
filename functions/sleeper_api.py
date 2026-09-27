@@ -65,3 +65,10 @@ def get_all_players(sport):
 def get_transactions(league_id, round_num):
     url = f"{BASE_URL}/league/{league_id}/transactions/{round_num}"
     return _make_request(url)
+
+
+def get_schedule(sport, season, season_type="regular"):
+    """Every game of a season with home and away team: the one place a
+    stadium - and so its weather - can be read off."""
+    url = f"https://api.sleeper.com/schedule/{sport}/{season_type}/{season}"
+    return _make_request(url)

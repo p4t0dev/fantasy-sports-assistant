@@ -51,6 +51,11 @@ _AGGREGATE_GP = 5
 
 def season_factor(p_stats, sport="nfl"):
     """Multiplier that turns one projection row into a season total."""
+    if sport == "nfl":
+        # Always season totals - team defenses included, which ship `gp: 1`
+        # next to 45 sacks. Read as a per-game row, every defense's season
+        # came out seventeen times too large.
+        return 1.0
     gp = (p_stats or {}).get("gp") or 0
     if gp >= _AGGREGATE_GP:
         return 1.0
@@ -146,6 +151,7 @@ def fetch_week_stats(sport, season, week):
             continue  # did not play: nothing to score, nothing to read a role off
         out[str(pid)] = {
             "team": row.get("team"),
+            "opp": row.get("opponent"),
             "stats": {k: v for k, v in p_stats.items()
                       if not k.startswith(_DROP_PREFIXES) and not k.startswith("pts_")
                       and "rank" not in k and v},

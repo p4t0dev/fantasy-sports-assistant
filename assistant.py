@@ -102,17 +102,21 @@ def show_overview(username, sport):
             for player in (change["in"], out):
                 if not player:
                     continue
-                label = (player.get("usage") or {}).get("label") or "keine Spiele bisher"
-                print(f"           {player['name']}: {label}")
-                if player.get("proj_missing"):
-                    print(f"           {player['name']}: {player['proj_missing']}")
-        notes = league.get("usage_notes") or []
+                print(f"           {player['name']}:")
+                for line in (player.get("forecast") or {}).get("explain") or []:
+                    print(f"             {line}")
+                label = (player.get("usage") or {}).get("label")
+                if label:
+                    print(f"             Nutzung {label}")
+        for call in league.get("close_calls") or []:
+            print(f"      KNAPP: {call['in']} vs. {call['out']} ({call['gap']:+} Pkt) - Münzwurf, "
+                  "entscheide nach Gefühl oder Matchup")
+        notes = [n for n in league.get("forecast_notes") or [] if n["starting"]]
         if notes:
-            print("      Nutzung/Rolle (Prognose angepasst):")
+            print("      Starter, bei denen die Prognose von Sleeper abweicht:")
         for note in notes:
-            where = "Starter" if note["starting"] else "Bank"
-            print(f"        {note['name']} ({note['pos']}, {where}) "
-                  f"{note['pts_week_base']} -> {note['pts_week']}  {note['label']}")
+            print(f"        {note['name']} ({note['pos']}) Sleeper {note['pts_week_base']} -> "
+                  f"{note['pts_week']}: " + " | ".join(note["explain"][:-1]))
     return 0
 
 

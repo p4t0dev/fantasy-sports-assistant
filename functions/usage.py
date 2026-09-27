@@ -192,10 +192,9 @@ def usage_label(sig, pos, names=None):
         parts.append(f"nur Vertretung für {who}")
     if not sig["current"]:
         parts.append(f"letztes Spiel W{sig['last_week']}")
-    label = f"W{sig['last_week']}: " + ", ".join(parts)
-    if abs(sig["adj"] - 1) >= NOTABLE_ADJ:
-        label += f" → Prognose {'+' if sig['adj'] > 1 else '−'}{round(abs(sig['adj'] - 1) * 100)} %"
-    return label
+    # What the role signal does to the forecast is the forecast's to say
+    # (functions/forecast.py, factor R); this line only reports it.
+    return f"W{sig['last_week']}: " + ", ".join(parts)
 
 
 def build_usage(week_stats, players, score, is_out):
