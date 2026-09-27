@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import Link from "next/link";
 import UpdateDataButton from "@/components/UpdateDataButton";
+import VersionFooter from "@/components/VersionFooter";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
@@ -57,6 +58,7 @@ export default function RootLayout({
         <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
           {children}
         </main>
+        <VersionFooter />
       </body>
     </html>
   );

@@ -295,11 +295,19 @@ Firebase-Projekt einmalig zuordnen (legt `.firebaserc` an):
 firebase use --add
 ```
 
-Danach bauen und deployen:
+Danach bauen und deployen — mit einem Befehl, der auch das Secret
+`ODDS_API_KEY` anlegt, falls es fehlt, und vorher die Tests laufen lässt:
 
 ```bash
-npm run build --prefix frontend && firebase deploy
+tools/deploy.sh
 ```
+
+### Version
+
+Schema `0.<PR>.<Patch>`: die mittlere Zahl ist der Pull Request, der die
+Version ausgeliefert hat (`frontend/package.json`, Übersicht in
+`CHANGELOG.md`). Der Footer jeder Seite zeigt Version, PR-Link und Commit.
+Jeder PR, der ausgeliefert wird, setzt die Version auf seine Nummer.
 
 `firebase.json` liefert `frontend/out` aus; `next.config.ts` erzeugt dieses
 Verzeichnis über `output: "export"`. Python Cloud Functions sind gen2 und
