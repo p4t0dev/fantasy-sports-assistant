@@ -346,7 +346,8 @@ def usage_signals(sport, scoring_settings, players_db):
 
         def is_out(pid):
             player = players_db.get(pid) or {}
-            return signals.injury_signal(player, now_ms)["severity"] >= signals.BLOCKING_CLEARED_AT
+            # Doubtful counts: most of them sit, and the stand-in keeps the job.
+            return signals.injury_signal(player, now_ms)["severity"] >= 2
 
         return usage.build_usage(data["weeks"], players_db, score, is_out)
     except Exception as e:  # noqa: BLE001 - a missing signal, not a failed request

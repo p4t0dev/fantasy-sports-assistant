@@ -64,8 +64,8 @@ def week_games(week_rows, players, score):
             "pos": pos,
             "team": team,
             "snap_pct": round(stats["off_snp"] / team_snaps, 3) if team_snaps else None,
-            "targets": stats.get("rec_tgt") or 0,
-            "touches": (stats.get("rush_att") or 0) + (stats.get("rec") or 0),
+            "targets": int(stats.get("rec_tgt") or 0),
+            "touches": int((stats.get("rush_att") or 0) + (stats.get("rec") or 0)),
             "pts": round(score(str(pid), stats), 1),
             "_key": _usage_key(pos, stats),
         }
@@ -125,7 +125,8 @@ def usage_signal(pid, player, history, latest_week, is_out):
 
     current = last_week == latest_week
     adj = 1.0
-    if current and pos in ADJUSTED_POSITIONS and earlier:
+    # A fill-in's snaps and touches came with the stand-in job, and go with it.
+    if current and pos in ADJUSTED_POSITIONS and earlier and not filled_in_for:
         adj = 1.0 + ROLE_WEIGHT * shift
         if snap_delta is not None:
             adj += SNAP_WEIGHT * snap_delta * 100

@@ -58,6 +58,8 @@ class UsageTest(unittest.TestCase):
         self.assertEqual(out["rb2"]["role_shift"], 0)
         self.assertEqual(out["rb2"]["filled_in_for"], ["rb1"])
         self.assertIn("Vertretung für Starter Back", out["rb2"]["label"])
+        # Nor do the snaps and touches that came with the stand-in job count.
+        self.assertEqual(out["rb2"]["adj"], 1.0)
         # rb1 missed the latest game: his old usage says nothing about now.
         self.assertFalse(out["rb1"]["current"])
         self.assertEqual(out["rb1"]["adj"], 1.0)
