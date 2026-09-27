@@ -59,6 +59,23 @@ abgeschlagen, `Questionable` **nicht**: die meisten spielen, und ob dieser
 spielt, steht vor dem Kickoff fest. Der 20-%-Saisonabschlag bänkte Joe Burrow
 für Tyler Shough; jetzt ist `Questionable` ein Hinweis im Aufstellungs-Check.
 
+**Nutzung und Rolle (`usage`)** — die Wochenprognose ist Sleepers Zahl, und
+das Modell hatte bisher nichts Eigenes dagegenzuhalten: ein Back, der in Woche 2
+das Backfield übernommen hat, sah aus wie vor der Saison. Die Depth Chart
+bewegte sich nur, wenn der Vordermann verletzt war, und erzielte Punkte
+erreichten die Aufstellung nie. `functions/usage.py` liest aus den Box-Scores
+der gespielten Wochen (`stats_nfl_<saison>_weekly.json`) Snap-Anteil, Touches
+und Targets und rankt jeden Spieler innerhalb der Positionsgruppe seines Teams
+(„WR3 → WR2“). Daraus wird `pts_week` um höchstens ±10 % korrigiert
+(`pts_week_base` bleibt die unkorrigierte Prognose): +/−5 % je Platz auf- oder
+abwärts, 0.4 % je Prozentpunkt Snap-Anteil gegenüber den früheren Spielen.
+Punkte gehen **nicht** ein — nach zwei Spielen ist ein langer Touchdown die
+halbe Saison; sie stehen nur im Label. Nicht korrigiert wird bei nur einem
+Spiel, bei Quarterbacks, bei gesperrten Spielern, bei einem Spieler, dessen
+letztes Spiel nicht das letzte seines Teams war, und bei einem Aufstieg, der
+nur Vertretung war (der Vordermann fehlte und ist jetzt wieder fit). Ohne
+Box-Scores ist jede Korrektur 1.0.
+
 **Gesperrte Spieler** — ist das Spiel eines Spielers vorbei (Spieldatum vor
 heute, US-Zeit), bleibt er, wo er ist: ein Starter behält Platz und Punkte, ein
 Bankspieler kann nicht mehr rein. Optimiert wird nur der Rest. Eine

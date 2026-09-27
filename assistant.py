@@ -99,6 +99,17 @@ def show_overview(username, sport):
             out = change["out"]
             print(f"      REIN {change['in']['name']} ({change['in']['pts_week']})"
                   + (f"  RAUS {out['name']} ({out['pts_week']})" if out else ""))
+            for player in (change["in"], out):
+                label = ((player or {}).get("usage") or {}).get("label")
+                if label:
+                    print(f"           {player['name']}: {label}")
+        notes = league.get("usage_notes") or []
+        if notes:
+            print("      Nutzung/Rolle (Prognose angepasst):")
+        for note in notes:
+            where = "Starter" if note["starting"] else "Bank"
+            print(f"        {note['name']} ({note['pos']}, {where}) "
+                  f"{note['pts_week_base']} -> {note['pts_week']}  {note['label']}")
     return 0
 
 

@@ -32,6 +32,8 @@ import urllib.request
 import urllib.parse
 
 BASE_URL = "https://api.sleeper.com/projections"
+# Actual box scores, on the same row schema as the projections.
+STATS_URL = "https://api.sleeper.com/stats"
 
 # Positions worth asking for. The endpoint takes repeated position[] params and
 # silently returns nothing for a sport/position combination it does not know.
@@ -55,13 +57,13 @@ def season_factor(p_stats, sport="nfl"):
     return float(SEASON_GAMES.get(sport, 17))
 
 
-def _fetch_rows(sport, path):
+def _fetch_rows(sport, path, base=BASE_URL, positions=None):
     """Raw projection rows for one endpoint path, or None on any failure."""
-    positions = POSITIONS.get(sport) or POSITIONS["nfl"]
+    positions = positions or POSITIONS.get(sport) or POSITIONS["nfl"]
     query = urllib.parse.urlencode(
         [("season_type", "regular")] + [("position[]", p) for p in positions]
     )
-    url = f"{BASE_URL}/{sport}/{path}?{query}"
+    url = f"{base}/{sport}/{path}?{query}"
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -123,3 +125,34 @@ def fetch_week_projections(sport, season, week):
         stats[str(pid)] = {k: v for k, v in p_stats.items()
                            if not k.startswith(_DROP_PREFIXES)}
     return {"stats": stats, "opp": opp, "date": date}
+
+
+# The positions whose weekly role a snap count and a target count describe.
+# Kickers, defenses and IDP have no "RB2 moved up to RB1".
+USAGE_POSITIONS = ["QB", "RB", "WR", "TE"]
+
+
+def fetch_week_stats(sport, season, week):
+    """What actually happened in one played week: {pid: {team, stats}}.
+
+    Stats rows carry the full box score, so they are scored through the
+    league's own settings just like the projections. Only the scoring keys and
+    the usage keys are kept. Returns None when the fetch failed.
+    """
+    rows = _fetch_rows(sport, f"{season}/{week}", base=STATS_URL,
+                       positions=USAGE_POSITIONS)
+    if rows is None:
+        return None
+    out = {}
+    for row in rows:
+        pid = row.get("player_id")
+        p_stats = row.get("stats")
+        if pid is None or not p_stats or not p_stats.get("off_snp"):
+            continue  # did not take a snap: nothing to read a role off
+        out[str(pid)] = {
+            "team": row.get("team"),
+            "stats": {k: v for k, v in p_stats.items()
+                      if not k.startswith(_DROP_PREFIXES) and not k.startswith("pts_")
+                      and "rank" not in k and v},
+        }
+    return out

@@ -8,6 +8,7 @@ import sleeper_api
 import signals
 import lineup
 import projections
+import usage
 
 def fetch_espn_college_stats(player_name):
     """
@@ -189,6 +190,10 @@ def week_projections_file(sport, year):
     return f"projections_{sport}_{year}_weekly.json"
 
 
+def week_stats_file(sport, year):
+    return f"stats_{sport}_{year}_weekly.json"
+
+
 def current_season(sport):
     state = sleeper_api.get_state(sport) or {}
     return str(state.get("league_season") or state.get("season") or "2026")
@@ -287,6 +292,68 @@ def load_week_projections(sport="nfl"):
     return None
 
 
+def fetch_played_weeks(sport, season, week, have=None):
+    """Box scores of every week before `week`, reusing the ones in `have`.
+
+    A played week does not change any more, so only the newest one is
+    refetched (stat corrections land in the days after a game) together with
+    any week that is missing.
+    """
+    weeks = dict((have or {}).get("weeks") or {})
+    for w in range(1, week):
+        if str(w) in weeks and w < week - 1:
+            continue
+        data = projections.fetch_week_stats(sport, season, w)
+        if data:
+            weeks[str(w)] = data
+    return {"season": str(season), "week": week, "fetched_at": int(time.time()),
+            "weeks": weeks}
+
+
+def load_played_weeks(sport="nfl"):
+    """Stored box scores, topped up live when the stored file is behind."""
+    week = current_week(sport)
+    if not week or week < 2:
+        return None
+    season = current_season(sport)
+    filename = week_stats_file(sport, season)
+    data = load_json(filename)
+    if data and all(str(w) in (data.get("weeks") or {}) for w in range(1, week)):
+        return data
+    data = fetch_played_weeks(sport, season, week, data)
+    if data["weeks"]:
+        _JSON_CACHE[filename] = (time.time(), data)
+        return data
+    return None
+
+
+def usage_signals(sport, scoring_settings, players_db):
+    """Role and usage per player from the weeks played so far ({} when none).
+
+    Never allowed to break a lineup: without box scores every adjustment is
+    1.0 and the weekly projection stands as it is.
+    """
+    try:
+        data = load_played_weeks(sport)
+        if not data:
+            return {}
+
+        def score(pid, stats):
+            pos = (players_db.get(pid) or {}).get("position")
+            return calculate_custom_score(stats, pos, scoring_settings, sport)
+
+        now_ms = int(time.time() * 1000)
+
+        def is_out(pid):
+            player = players_db.get(pid) or {}
+            return signals.injury_signal(player, now_ms)["severity"] >= signals.BLOCKING_CLEARED_AT
+
+        return usage.build_usage(data["weeks"], players_db, score, is_out)
+    except Exception as e:  # noqa: BLE001 - a missing signal, not a failed request
+        print(f"Usage signals failed: {e}")
+        return {}
+
+
 def _today_us():
     """Today's date where the games are played. A game dated before it is over."""
     try:
@@ -335,6 +402,7 @@ def weekly_points(sport, scoring_settings, players_db):
         "opp": {w: data["weeks"][str(w)]["opp"] for w in weeks},
         "date": data["weeks"][str(weeks[0])].get("date", {}),
         "today": _today_us(),
+        "usage": usage_signals(sport, scoring_settings, players_db or {}),
     }
 
 
@@ -1533,8 +1601,9 @@ def _week_availability(sig):
 def _week_fields(pid, player, sig, weekly):
     """This week's points and schedule for one player, or Nones off-season."""
     if not weekly:
-        return {"pts_week": None, "pts_horizon": None, "opp": None,
-                "bye": False, "bye_week": None, "locked": False}
+        return {"pts_week": None, "pts_week_base": None, "pts_horizon": None,
+                "opp": None, "bye": False, "bye_week": None, "locked": False,
+                "usage": None}
 
     weeks = weekly["weeks"]
     row = weekly["pts"].get(str(pid)) or [0.0] * len(weeks)
@@ -1551,16 +1620,24 @@ def _week_fields(pid, player, sig, weekly):
     # A short-term designation is about this game. A long-term one - IR, PUP,
     # suspension - keeps costing in the weeks after it.
     later = injury.get("redraft_mult", 1.0) if injury.get("term") == "long" else 1.0
+    # The role his team has been giving him, against the one the projection
+    # assumes. A locked game is scored already; nothing is adjusted there.
+    use = (weekly.get("usage") or {}).get(str(pid))
+    adj = 1.0 if locked or not use else use["adj"]
 
     return {
-        "pts_week": round(row[0] * now, 1),
-        "pts_horizon": round(row[0] * now + sum(row[1:]) * later, 1),
+        "pts_week": round(row[0] * now * adj, 1),
+        "pts_week_base": round(row[0] * now, 1),
+        "pts_horizon": round((row[0] * now + sum(row[1:]) * later) * adj, 1),
         "opp": opp,
         "bye": bool(byes) and byes[0] == weeks[0],
         "bye_week": byes[0] if byes else None,
         # His game is over: whatever he scored is on the board, and he can be
         # neither started nor benched any more.
         "locked": locked,
+        "usage": ({"label": use["label"], "adj": use["adj"], "rank": use["rank"],
+                   "snap_pct": use["snap_pct"], "avg_pts": use["avg_pts"]}
+                  if use else None),
     }
 
 
@@ -1986,6 +2063,17 @@ def _lineup_analysis(my_roster, roster_positions, inputs):
                 "injury": player["injury"],
             })
 
+    # Who the usage layer moved, starters first: the lines to check against
+    # what you saw on Sunday before trusting the lineup built on them.
+    usage_notes = sorted(
+        ({"name": p["name"], "pos": p["pos"], "starting": p["id"] in starters,
+          "pts_week": p["pts_week"], "pts_week_base": p["pts_week_base"],
+          "label": p["usage"]["label"], "adj": p["usage"]["adj"]}
+         for p in squad
+         if p.get("usage") and not p.get("locked")
+         and abs(p["usage"]["adj"] - 1) >= usage.NOTABLE_ADJ),
+        key=lambda n: (not n["starting"], -abs(n["adj"] - 1)))
+
     changes = lineup_changes(current, report["slots"], _week_value)
     current_total = round(
         sum(_week_value(s["player"]) for s in current if s["player"]), 1)
@@ -2005,6 +2093,7 @@ def _lineup_analysis(my_roster, roster_positions, inputs):
         "total": report["total"],
         "empty": report["empty"],
         "warnings": warnings,
+        "usage_notes": usage_notes,
         "issues": lineup_issues(current, gain),
         "positions": sorted(lineup.positions_in_use(roster_positions)),
     }
@@ -2103,6 +2192,7 @@ def lineup_overview_api(username, sport="nfl"):
         entry.update({
             "issues": analysis["issues"],
             "changes": analysis["changes"],
+            "usage_notes": analysis["usage_notes"],
             "current_total": analysis["current_total"],
             "total": analysis["total"],
             "gain": analysis["gain"],
@@ -2168,6 +2258,14 @@ def update_sleeper_data_api(sport="nfl", college_batch=25):
             updated.append(f"Wochenprojektionen W{first}-W{last}")
         else:
             errors.append("Wochenprojektionen")
+        if week >= 2:
+            filename = week_stats_file(sport, str(current_year))
+            played = fetch_played_weeks(sport, str(current_year), week, load_json(filename))
+            if played["weeks"]:
+                _write_data(filename, played)
+                updated.append(f"Spielstatistiken W1-W{week - 1}")
+            else:
+                errors.append("Spielstatistiken")
 
     # College profiles are only relevant for the NFL rookie model, and each one
     # costs an ESPN round trip - so they are topped up in batches.
