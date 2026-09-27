@@ -100,9 +100,12 @@ def show_overview(username, sport):
             print(f"      REIN {change['in']['name']} ({change['in']['pts_week']})"
                   + (f"  RAUS {out['name']} ({out['pts_week']})" if out else ""))
             for player in (change["in"], out):
-                label = ((player or {}).get("usage") or {}).get("label")
-                if label:
-                    print(f"           {player['name']}: {label}")
+                if not player:
+                    continue
+                label = (player.get("usage") or {}).get("label") or "keine Spiele bisher"
+                print(f"           {player['name']}: {label}")
+                if player.get("proj_missing"):
+                    print(f"           {player['name']}: {player['proj_missing']}")
         notes = league.get("usage_notes") or []
         if notes:
             print("      Nutzung/Rolle (Prognose angepasst):")

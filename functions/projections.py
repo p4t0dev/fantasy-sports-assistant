@@ -127,28 +127,23 @@ def fetch_week_projections(sport, season, week):
     return {"stats": stats, "opp": opp, "date": date}
 
 
-# The positions whose weekly role a snap count and a target count describe.
-# Kickers, defenses and IDP have no "RB2 moved up to RB1".
-USAGE_POSITIONS = ["QB", "RB", "WR", "TE"]
-
-
 def fetch_week_stats(sport, season, week):
     """What actually happened in one played week: {pid: {team, stats}}.
 
-    Stats rows carry the full box score, so they are scored through the
-    league's own settings just like the projections. Only the scoring keys and
-    the usage keys are kept. Returns None when the fetch failed.
+    Every position, IDP, kickers and defenses included: what a player actually
+    scored is the first thing to check against a projection, whatever his
+    position. Stats rows carry the full box score, so they are scored through
+    the league's own settings just like the projections. Returns None when the fetch failed.
     """
-    rows = _fetch_rows(sport, f"{season}/{week}", base=STATS_URL,
-                       positions=USAGE_POSITIONS)
+    rows = _fetch_rows(sport, f"{season}/{week}", base=STATS_URL)
     if rows is None:
         return None
     out = {}
     for row in rows:
         pid = row.get("player_id")
         p_stats = row.get("stats")
-        if pid is None or not p_stats or not p_stats.get("off_snp"):
-            continue  # did not take a snap: nothing to read a role off
+        if pid is None or not p_stats or not p_stats.get("gp"):
+            continue  # did not play: nothing to score, nothing to read a role off
         out[str(pid)] = {
             "team": row.get("team"),
             "stats": {k: v for k, v in p_stats.items()

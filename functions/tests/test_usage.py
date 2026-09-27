@@ -8,7 +8,7 @@ import usage  # noqa: E402
 
 
 def row(team, snaps, team_snaps=60, rush=0, tgt=0, rec=0, pts=0.0):
-    return {"team": team, "stats": {"off_snp": snaps, "tm_off_snp": team_snaps,
+    return {"team": team, "stats": {"gp": 1, "off_snp": snaps, "tm_off_snp": team_snaps,
                                     "rush_att": rush, "rec_tgt": tgt, "rec": rec,
                                     "_pts": pts}}
 
@@ -20,6 +20,7 @@ PLAYERS = {
     "wr2": {"position": "WR", "full_name": "Slot Receiver", "depth_chart_order": 1},
     "wr3": {"position": "WR", "full_name": "Rising Receiver", "depth_chart_order": 1},
     "qb1": {"position": "QB", "full_name": "Quarterback", "depth_chart_order": 1},
+    "dl1": {"position": "DL", "full_name": "Edge Rusher", "depth_chart_order": 1},
 }
 
 
@@ -106,6 +107,18 @@ class UsageTest(unittest.TestCase):
         }
         out = usage.build_usage(weeks, PLAYERS, score, never_out)
         self.assertTrue(out["rb1"]["current"])
+
+    def test_idp_gets_points_and_snaps_but_no_adjustment(self):
+        idp = lambda snaps, pts: {"team": "AAA", "stats": {"gp": 1, "def_snp": snaps,
+                                                            "tm_def_snp": 70, "_pts": pts}}
+        weeks = {"1": {"dl1": idp(53, 4.0)}, "2": {"dl1": idp(56, 13.0)}}
+        out = usage.build_usage(weeks, PLAYERS, score, never_out)
+        self.assertEqual(out["dl1"]["adj"], 1.0)
+        self.assertEqual(out["dl1"]["pts_by_week"], {1: 4.0, 2: 13.0})
+        self.assertEqual(out["dl1"]["avg_pts"], 8.5)
+        self.assertIsNone(out["dl1"]["rank"])
+        self.assertIn("Pkt 4 / 13 (Ø 8.5)", out["dl1"]["label"])
+        self.assertIn("Snaps 80 %", out["dl1"]["label"])
 
     def test_no_played_weeks(self):
         self.assertEqual(usage.build_usage({}, PLAYERS, score, never_out), {})

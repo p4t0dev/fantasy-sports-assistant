@@ -57,19 +57,24 @@ def week_games(week_rows, players, score):
         pos = player.get("position")
         stats = row.get("stats") or {}
         team = row.get("team") or player.get("team")
-        if pos not in USAGE_POSITIONS or not team or not stats.get("off_snp"):
+        if not team or not stats.get("gp"):
             continue
-        team_snaps = stats.get("tm_off_snp") or 0
+        ranked = pos in USAGE_POSITIONS and stats.get("off_snp")
+        snaps, team_snaps = ((stats.get("off_snp"), stats.get("tm_off_snp")) if ranked
+                             else (stats.get("def_snp"), stats.get("tm_def_snp")))
         games[str(pid)] = {
             "pos": pos,
             "team": team,
-            "snap_pct": round(stats["off_snp"] / team_snaps, 3) if team_snaps else None,
+            "snap_pct": round(snaps / team_snaps, 3) if snaps and team_snaps else None,
             "targets": int(stats.get("rec_tgt") or 0),
             "touches": int((stats.get("rush_att") or 0) + (stats.get("rec") or 0)),
             "pts": round(score(str(pid), stats), 1),
             "_key": _usage_key(pos, stats),
+            # Points only: a kicker or a linebacker has no "moved up to WR2".
+            "rank": None, "ahead": [], "group": [],
         }
-        groups.setdefault((team, pos), []).append(str(pid))
+        if ranked:
+            groups.setdefault((team, pos), []).append(str(pid))
 
     for members in groups.values():
         members.sort(key=lambda pid: games[pid]["_key"], reverse=True)
@@ -109,7 +114,7 @@ def usage_signal(pid, player, history, latest_week, is_out):
     if last["snap_pct"] is not None and snaps_before:
         snap_delta = round(last["snap_pct"] - sum(snaps_before) / len(snaps_before), 3)
 
-    rank_prev = earlier[-1]["rank"] if earlier else None
+    rank_prev = earlier[-1]["rank"] if earlier and last["rank"] is not None else None
     shift = 0
     filled_in_for = []
     if rank_prev is not None:
@@ -147,6 +152,7 @@ def usage_signal(pid, player, history, latest_week, is_out):
         "filled_in_for": filled_in_for,
         "avg_pts": avg_pts,
         "last_pts": last["pts"],
+        "pts_by_week": {w: g["pts"] for w, g in history},
         "adj": adj,
     }
 
@@ -161,7 +167,9 @@ def usage_label(sig, pos, names=None):
         return None
     names = names or {}
     parts = []
-    if sig["rank_prev"] is not None and sig["rank_prev"] != sig["rank"]:
+    if sig["rank"] is None:
+        pass
+    elif sig["rank_prev"] is not None and sig["rank_prev"] != sig["rank"]:
         parts.append(f"{pos}{sig['rank_prev']} → {pos}{sig['rank']}")
     elif sig["depth"] and sig["depth"] != sig["rank"] and pos in ("RB", "TE"):
         # Receivers share depth order 1 across three spots, so only here does
@@ -176,7 +184,9 @@ def usage_label(sig, pos, names=None):
         parts.append(f"{sig['touches']} Touches")
     elif pos in ("WR", "TE"):
         parts.append(f"{sig['targets']} Targets")
-    parts.append(f"Ø {sig['avg_pts']} Pkt in {len(sig['weeks'])} Sp.")
+    by_week = " / ".join(f"{p:g}" for p in sig["pts_by_week"].values())
+    parts.append(f"Pkt {by_week} (Ø {sig['avg_pts']})" if len(sig["weeks"]) > 1
+                 else f"Pkt {by_week}")
     if sig["filled_in_for"]:
         who = ", ".join(names.get(p, p) for p in sig["filled_in_for"][:2])
         parts.append(f"nur Vertretung für {who}")

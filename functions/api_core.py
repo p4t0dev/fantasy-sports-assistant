@@ -292,6 +292,10 @@ def load_week_projections(sport="nfl"):
     return None
 
 
+# Bumped when the stored box scores change shape; an older file is refetched.
+PLAYED_WEEKS_VERSION = 2
+
+
 def fetch_played_weeks(sport, season, week, have=None):
     """Box scores of every week before `week`, reusing the ones in `have`.
 
@@ -299,7 +303,9 @@ def fetch_played_weeks(sport, season, week, have=None):
     refetched (stat corrections land in the days after a game) together with
     any week that is missing.
     """
-    weeks = dict((have or {}).get("weeks") or {})
+    # A file from before every position was fetched holds offense only.
+    same_schema = (have or {}).get("version") == PLAYED_WEEKS_VERSION
+    weeks = dict((have or {}).get("weeks") or {}) if same_schema else {}
     for w in range(1, week):
         if str(w) in weeks and w < week - 1:
             continue
@@ -307,7 +313,7 @@ def fetch_played_weeks(sport, season, week, have=None):
         if data:
             weeks[str(w)] = data
     return {"season": str(season), "week": week, "fetched_at": int(time.time()),
-            "weeks": weeks}
+            "version": PLAYED_WEEKS_VERSION, "weeks": weeks}
 
 
 def load_played_weeks(sport="nfl"):
@@ -318,7 +324,8 @@ def load_played_weeks(sport="nfl"):
     season = current_season(sport)
     filename = week_stats_file(sport, season)
     data = load_json(filename)
-    if data and all(str(w) in (data.get("weeks") or {}) for w in range(1, week)):
+    if (data and data.get("version") == PLAYED_WEEKS_VERSION
+            and all(str(w) in (data.get("weeks") or {}) for w in range(1, week))):
         return data
     data = fetch_played_weeks(sport, season, week, data)
     if data["weeks"]:
@@ -1599,12 +1606,33 @@ def _week_availability(sig):
     return injury.get("redraft_mult", 1.0)
 
 
-def _week_fields(pid, player, sig, weekly):
+def _missing_projection(row, opp, locked, sig, player, use, proj):
+    """A stand-in for a projection Sleeper did not publish, or None.
+
+    Sleeper ships rows without stats for players it has not projected yet -
+    on a Sunday, most of a Monday night team's defense. Read as "does not
+    play", a healthy starter scored 0.0 and was benched for it. A zero is only
+    believed when there is a reason for it: a bye, a designation from Doubtful
+    up, a game already played.
+    """
+    if row[0] or not opp or locked or player.get("status") != "Active":
+        return None
+    if (((sig or {}).get("injury") or {}).get("severity") or 0) >= 2:
+        return None
+    if use:
+        return use["avg_pts"], f"Ø {use['avg_pts']} aus {len(use['weeks'])} Sp."
+    if proj:
+        per_game = round(proj / projections.SEASON_GAMES.get("nfl", 17), 1)
+        return per_game, f"Saisonprognose / 17 = {per_game}"
+    return None
+
+
+def _week_fields(pid, player, sig, weekly, proj=None):
     """This week's points and schedule for one player, or Nones off-season."""
     if not weekly:
         return {"pts_week": None, "pts_week_base": None, "pts_horizon": None,
                 "opp": None, "bye": False, "bye_week": None, "locked": False,
-                "usage": None}
+                "usage": None, "proj_missing": None}
 
     weeks = weekly["weeks"]
     row = weekly["pts"].get(str(pid)) or [0.0] * len(weeks)
@@ -1626,6 +1654,13 @@ def _week_fields(pid, player, sig, weekly):
     use = (weekly.get("usage") or {}).get(str(pid))
     adj = 1.0 if locked or not use else use["adj"]
 
+    stand_in = _missing_projection(row, opp, locked, sig, player, use, proj)
+    if stand_in:
+        # What he has actually been doing stands in for the projection, so
+        # the usage adjustment - a correction *to* a projection - stays out.
+        row = [stand_in[0]] + list(row[1:])
+        adj = 1.0
+
     return {
         "pts_week": round(row[0] * now * adj, 1),
         "pts_week_base": round(row[0] * now, 1),
@@ -1637,8 +1672,11 @@ def _week_fields(pid, player, sig, weekly):
         # neither started nor benched any more.
         "locked": locked,
         "usage": ({"label": use["label"], "adj": use["adj"], "rank": use["rank"],
-                   "snap_pct": use["snap_pct"], "avg_pts": use["avg_pts"]}
+                   "snap_pct": use["snap_pct"], "avg_pts": use["avg_pts"],
+                   "pts_by_week": {str(w): p for w, p in use["pts_by_week"].items()}}
                   if use else None),
+        "proj_missing": (f"keine Wochenprognose, Ersatz {stand_in[1]}"
+                         if stand_in else None),
     }
 
 
@@ -1673,7 +1711,7 @@ def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, pro
         "opportunity": sig["opportunity"] if sig else None,
         "news_days": sig["recency"]["news_days"] if sig else None,
     }
-    entry.update(_week_fields(pid, player, sig, weekly))
+    entry.update(_week_fields(pid, player, sig, weekly, proj))
     if extra:
         entry.update(extra)
     return entry
