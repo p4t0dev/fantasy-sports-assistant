@@ -28,6 +28,7 @@ players_*.json
 stats_*.json
 projections_*.json
 college_stats.json
+gameday_*.json
 
 # Per-user overview snapshots: built by the scheduled job, and personal.
 overview_*.json
