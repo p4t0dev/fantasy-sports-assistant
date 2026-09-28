@@ -39,14 +39,17 @@ import usage  # noqa: E402
 MIN_S = 3.0          # below this nobody starts him; not a lineup decision
 CLOSE = 5.0          # forecasts this close make a pair a real decision
 MAX_PAIRS = 30000    # sampled per position, so the grid stays minutes, not hours
+# beta (role) fitted to zero at every position in the 2025 fit and stays out;
+# lam is how much of form is actual points rather than usage-expected ones.
 GRID = {
     "k": [2.0, 4.0, 8.0, 16.0, 32.0],
-    "cap": [0.15, 0.3, 0.5],
+    "cap": [0.15, 0.3, 0.5, 0.7],
     "s_share": [0.5, 0.75, 1.0],
-    "beta": [0.0, 0.5, 1.0],
-    "alpha": [0.0, 0.5, 1.0],
+    "beta": [0.0],
+    "alpha": [0.0, 0.5],
+    "lam": [1.0, 0.5, 0.0],
 }
-SLEEPER_ONLY = {"k": 4.0, "cap": 0.0, "s_share": 1.0, "beta": 0.0, "alpha": 0.0}
+SLEEPER_ONLY = {"k": 4.0, "cap": 0.0, "s_share": 1.0, "beta": 0.0, "alpha": 0.0, "lam": 1.0}
 
 
 def fetch_season(season, path):
@@ -95,6 +98,10 @@ def build_samples(data, players, scoring):
             continue
         before = {str(x): stats[x] for x in weeks if x < w}
         use = usage.build_usage(before, players, score, lambda pid: False)
+        # xFP fitted on the weeks before this one only, as in production.
+        xfp_model = forecast.fit_xfp(
+            [(forecast.group_of(pos_of(pid)), row["stats"], actual[x][pid])
+             for x in weeks if x < w for pid, row in stats[x].items()])
 
         # Points allowed per game, per defense and position group.
         allowed, games = {}, {}
@@ -127,10 +134,12 @@ def build_samples(data, players, scoring):
             team = stats[w][pid].get("team")
             opp = proj[w]["opp"].get(team)
             history = [actual[x][pid] for x in weeks if x < w and pid in actual[x]]
+            xhist = [forecast.xfp(stats[x][pid]["stats"], group, xfp_model)
+                     for x in weeks if x < w and pid in actual[x]]
             q = forecast.quality(season_q.get(pid), *(prev.get(pid) or (None, 0)))
             samples.append({
                 "week": w, "pid": pid, "group": group, "pos": pos_of(pid),
-                "S": S, "history": history, "Q": q,
+                "S": S, "history": history, "xhist": xhist, "Q": q,
                 "usage_adj": (use.get(pid) or {}).get("adj"),
                 "allowed": per_game.get((opp, group)),
                 "league_avg": league_avg.get(group),
@@ -147,7 +156,8 @@ def predict(sample, params):
         return forecast.forecast(sample["pos"], sample["S"], sample["history"], sample["Q"],
                                  usage_adj=sample["usage_adj"], allowed=sample["allowed"],
                                  league_avg=sample["league_avg"],
-                                 opp_games=sample["opp_games"])["P"]
+                                 opp_games=sample["opp_games"],
+                                 xfp_history=sample["xhist"])["P"]
     finally:
         forecast.PARAMS[sample["group"]] = saved
 
@@ -216,7 +226,13 @@ def main():
         verdict = "Modell"
         if args.fit and (pair or 0) <= (base_pair or 0):
             params, mae, pair, verdict = dict(SLEEPER_ONLY), base_mae, base_pair, "nur Sleeper"
+        preds = [s["S"] for s in test] if verdict == "nur Sleeper" else \
+            [predict(s, params) for s in test]
+        resid = [s["actual"] - p for s, p in zip(test, preds)]
+        mean_r = sum(resid) / len(resid)
+        sigma = round((sum((r - mean_r) ** 2 for r in resid) / (len(resid) - 1)) ** 0.5, 2)
         results[group] = {"params": params, "n": len(test), "pairs": len(test_pairs),
+                          "sigma": sigma,
                           "sleeper": {"mae": base_mae, "pairs": base_pair},
                           "model": {"mae": mae, "pairs": pair}, "verdict": verdict}
         print(f"{group:<4} {len(test):>5}  {base_mae:>11} {mae:>10}  "

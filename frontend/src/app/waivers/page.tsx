@@ -34,6 +34,8 @@ type Balance = {
    *  the depth engine actually decides on. Raw DVS is not comparable across
    *  positions. */
   edge_gain?: number;
+  /** "DVS", or "Pkt/Woche" where depth moves compare forecast points. */
+  edge_unit?: string;
   starts: boolean;
   empty_slots: string[];
 };
@@ -59,7 +61,18 @@ type WaiverData = {
   positions: string[];
   faab: { budget: number | null; left: number | null; waiver_type: number | null };
   /** The weeks `pts` is forecast over; null off-season (season projection). */
-  horizon?: { weeks: number[] } | null;
+  horizon?: { weeks: number[]; weights?: number[] | null } | null;
+  /** The waiver strategy for this league's format. */
+  profile?: { key: "dynasty" | "keeper" | "redraft" | "chopped"; label: string } | null;
+};
+
+// What each league format changes on this page (api_core.LEAGUE_PROFILES).
+const PROFILE_TEXT: Record<string, string> = {
+  dynasty: "Punkte dieser Wochen plus Dynasty-Wert; Kadertiefe nach Dynasty-Wert.",
+  keeper: "wie Dynasty, der Dynasty-Wert zählt halb.",
+  redraft: "nur Punkte zählen, Dynasty-Wert und Draft-Kapital spielen keine Rolle.",
+  chopped:
+    "nur Punkte zählen, diese Woche dreifach — wer Letzter wird, fliegt. Dynasty-Wert spielt keine Rolle.",
 };
 
 // The board answers more than one question, so it gets more than one order.
@@ -314,6 +327,13 @@ function WaiversContent() {
               </>
             )}
           </p>
+          {data?.profile && (
+            <p className="text-xs text-gray-400 mt-1">
+              Strategie: <span className="text-gray-200 font-medium">{data.profile.label}</span>
+              {" — "}
+              {PROFILE_TEXT[data.profile.key]}
+            </p>
+          )}
           {data?.horizon?.weeks?.length ? (
             <p className="text-xs text-gray-500 mt-1">
               Punkte auf dieser Seite: unsere Prognose, Ø pro Woche über W
@@ -413,6 +433,7 @@ function WaiversContent() {
                     Wert über Ersatzniveau{" "}
                     <span className="text-green-400 font-medium">
                       +{rec.balance.edge_gain ?? rec.balance.dvs_gain}
+                      {rec.balance.edge_unit ? ` ${rec.balance.edge_unit}` : ""}
                     </span>
                     <span className="text-gray-500"> · verändert die Startelf nicht</span>
                   </p>

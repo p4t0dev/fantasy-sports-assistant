@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { Player, LineupSlot, Injury, LineupChange } from "@/lib/types";
+import type { Player, LineupSlot, Injury, LineupChange, CloseCall, MatchupStance } from "@/lib/types";
 import {
   InjuryBadge,
   SignalBadges,
@@ -14,7 +14,7 @@ import {
   MatchupBadge,
   startPts,
 } from "@/components/PlayerBadges";
-import { ForecastDelta, ForecastDetail } from "@/components/ForecastDetail";
+import { CloseCalls, ForecastDelta, ForecastDetail, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
 
 type LineupData = {
@@ -30,7 +30,8 @@ type LineupData = {
   total: number;
   empty: string[];
   warnings: { slot: string; player: string; injury: Injury }[];
-  close_calls?: { in: string; out: string; gap: number }[];
+  close_calls?: CloseCall[];
+  matchup?: MatchupStance | null;
   positions: string[];
 };
 
@@ -448,6 +449,9 @@ function LineupContent() {
             {gain > 0 && <span className="text-green-400 font-bold"> (+{gain})</span>}
           </p>
         </div>
+        <div className="mb-3">
+          <MatchupLine stance={data?.matchup} />
+        </div>
 
         {changes.length > 0 && (
           <div className="space-y-2">
@@ -478,13 +482,7 @@ function LineupContent() {
                 )}
               </div>
             ))}
-            {(data?.close_calls ?? []).map((c, i) => (
-              <p key={`cc-${i}`} className="text-xs text-yellow-300/90">
-                Knapp: {c.in} vs. {c.out} ({c.gap > 0 ? "+" : ""}
-                {c.gap} Pkt) — unter {1.5} Punkten ist das ein Münzwurf. Entscheide nach
-                Matchup oder Bauchgefühl.
-              </p>
-            ))}
+            <CloseCalls calls={data?.close_calls} />
             <p className="text-xs text-gray-500 pt-1">
               Rein und Raus sind wo möglich im selben Slot gepaart, sonst über
               Positionen hinweg — entscheidend ist die Menge, nicht das einzelne

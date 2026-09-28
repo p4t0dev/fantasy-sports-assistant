@@ -1,0 +1,78 @@
+# Deploy on every merge to main: tests, build, Firebase Hosting + Functions.
+#
+# One-time setup (see README, "Deploy per GitHub Actions"):
+#   secret   FIREBASE_SERVICE_ACCOUNT  JSON key of a service account with
+#                                      Firebase Admin, Cloud Functions Admin,
+#                                      Service Account User, Secret Manager
+#                                      Secret Accessor, Cloud Scheduler Admin
+#   variable NEXT_PUBLIC_API_URL       base URL of the functions
+#   variable FSA_ALLOWED_ORIGINS       as in functions/.env
+#   variable FSA_SNAPSHOT_USERS        as in functions/.env
+# Without the secret the job stops after the tests instead of failing.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      HAS_CREDENTIALS: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # The functions run on Python 3.14 (gen2); firebase-tools reads the
+          # runtime off the venv, so the venv has to be that version.
+          python-version: "3.14"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Functions venv
+        run: |
+          python -m venv functions/venv
+          functions/venv/bin/pip install -q -r functions/requirements.txt
+
+      - name: Python tests
+        run: functions/venv/bin/python -m unittest discover -s functions/tests
+
+      - name: Frontend install, lint, build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+        run: |
+          test -n "$NEXT_PUBLIC_API_URL" || { echo "Variable NEXT_PUBLIC_API_URL fehlt"; exit 1; }
+          npm ci --prefix frontend
+          npm run lint --prefix frontend
+          npm run build --prefix frontend
+
+      - name: Stop without credentials
+        if: env.HAS_CREDENTIALS != 'true'
+        run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt - Build ok, aber kein Deploy."
+
+      - name: Functions config
+        if: env.HAS_CREDENTIALS == 'true'
+        run: |
+          printf 'FSA_ALLOWED_ORIGINS=%s\nFSA_SNAPSHOT_USERS=%s\n' \
+            "${{ vars.FSA_ALLOWED_ORIGINS }}" "${{ vars.FSA_SNAPSHOT_USERS }}" > functions/.env
+
+      - name: Deploy
+        if: env.HAS_CREDENTIALS == 'true'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx -y firebase-tools@14 deploy --non-interactive --force
+          echo "Deployt: v$(node -p "require('./frontend/package.json').version") ($(git rev-parse --short HEAD))" >> "$GITHUB_STEP_SUMMARY"

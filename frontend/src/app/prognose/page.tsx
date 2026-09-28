@@ -120,9 +120,10 @@ A         = Verfügbarkeit`}</Formula>
               <tr>
                 <td className="py-2 pr-3 text-emerald-300 font-bold">F · Form</td>
                 <td className="py-2 pr-3">
-                  Schnitt seiner letzten {model?.form_games ?? 4} Spiele — was er tatsächlich
-                  gepunktet hat. Gewicht wächst mit jedem Spiel:{" "}
-                  <code className="text-blue-300">g_F = min(cap, n / (n + k))</code>
+                  Schnitt seiner letzten {model?.form_games ?? 4} Spiele — je Position gemischt
+                  aus dem, was er tatsächlich gepunktet hat, und dem, was seine{" "}
+                  <em>Nutzung</em> erwarten ließ (xFP, siehe unten). Gewicht wächst mit jedem
+                  Spiel: <code className="text-blue-300">g_F = min(cap, n / (n + k))</code>
                 </td>
                 <td className="py-2 text-gray-400">Box-Scores der gespielten Wochen</td>
               </tr>
@@ -205,6 +206,7 @@ A         = Verfügbarkeit`}</Formula>
               <tr>
                 <th className="py-2 pr-3">Pos</th>
                 <th className="py-2 pr-3">Basis nach 2 / 4 / 8 Spielen (S · F · Q)</th>
+                <th className="py-2 pr-3">Form aus Nutzung</th>
                 <th className="py-2 pr-3">Rolle β</th>
                 <th className="py-2 pr-3">Matchup α</th>
                 <th className="py-2 pr-3">Richtig: Sleeper → Modell</th>
@@ -233,6 +235,7 @@ A         = Verfügbarkeit`}</Formula>
                         );
                       })}
                     </td>
+                    <td className="py-2 pr-3">{pct(1 - (p.lam ?? 1))}</td>
                     <td className="py-2 pr-3">{p.beta}</td>
                     <td className="py-2 pr-3">{p.alpha}</td>
                     <td className="py-2 pr-3">
@@ -263,6 +266,77 @@ A         = Verfügbarkeit`}</Formula>
           Faktor hat im Backtest nicht geholfen und ist abgeschaltet; die
           Nutzungsdaten stehen trotzdem als Information beim Spieler.
         </p>
+      </Section>
+
+      <Section title="Form aus der Nutzung (xFP)">
+        <p>
+          Zwei Spiele Punkte sind vor allem Touchdowns; zwei Spiele Targets, Carries und
+          Snaps sind vor allem Rolle. xFP rechnet die Nutzung eines Spiels in die Punkte
+          um, die diese Nutzung im Schnitt bringt — per linearer Regression auf den
+          gespielten Wochen der laufenden Saison, im <em>Scoring deiner Liga</em>:
+        </p>
+        <ul className="list-disc list-inside text-xs space-y-0.5">
+          <li>QB: Pass-Versuche, Pass-Versuche in der Red Zone, Läufe, Läufe in der Red Zone</li>
+          <li>RB: Läufe, Läufe in der Red Zone, Targets, Targets in der Red Zone, Snaps</li>
+          <li>WR/TE: Targets, Targets in der Red Zone, Snaps</li>
+          <li>IDP: Defense-Snaps</li>
+        </ul>
+        <p>
+          Wie viel davon in die Form eingeht, ist gefittet (Spalte „Form aus Nutzung“
+          oben):{" "}
+          {groups
+            .filter((g) => (model!.params[g].lam ?? 1) < 1 && model!.params[g].cap > 0)
+            .map((g) => `${GROUP_LABEL[g] ?? g} ${pct(1 - (model!.params[g].lam ?? 1))}`)
+            .join(", ") || "derzeit bei keiner Position"}
+          . Wo die Form im Backtest nichts bringt, bleibt es bei Sleeper.
+        </p>
+      </Section>
+
+      <Section title="Knappe Entscheidungen: sicher oder mit Potenzial?">
+        <p>
+          Trennen zwei Spieler weniger als {limits?.close_call ?? 1.5} Punkte, entscheidet
+          nicht die Prognose, sondern deine Lage im Matchup. Dafür wird deine beste
+          Aufstellung gegen die beste deines Gegners gerechnet — mit derselben Prognose.
+        </p>
+        <ul className="list-disc list-inside space-y-1">
+          <li>
+            <strong className="text-emerald-300">Favorit</strong> (≥ 10 Punkte vorn): den
+            <em> sicheren</em> Spieler. Ein Favorit verliert durch eine schwache Woche, er
+            gewinnt nicht durch eine überragende.
+          </li>
+          <li>
+            <strong className="text-orange-300">Außenseiter</strong> (≥ 10 Punkte hinten): den
+            Spieler mit <em>Potenzial</em>. Nur eine starke Woche dreht das Duell.
+          </li>
+          <li>
+            <strong className="text-white">Chopped</strong>: immer den sicheren — es zählt nur,
+            nicht Letzter zu werden.
+          </li>
+          <li>Dazwischen bleibt es ein Münzwurf.</li>
+        </ul>
+        <p className="text-xs text-gray-400">
+          „Sicher“ heißt kleine Streuung: wie weit eine Woche von der Prognose abweicht (±1
+          Standardabweichung). Startwert je Position aus dem Backtest, danach die eigene
+          Streuung des Spielers, die mit jedem Spiel mehr zählt:{" "}
+          {Object.entries(results)
+            .filter(([, r]) => r.sigma)
+            .map(([g, r]) => `${g} ±${r.sigma}`)
+            .join(" · ")}
+          . Die optimale Aufstellung selbst ändert sich dadurch nie.
+        </p>
+      </Section>
+
+      <Section title="Waiver je Ligatyp">
+        <p>
+          Die Waiver bewerten mit derselben Prognose, über diese und die nächsten vier
+          Wochen (Bye = 0). Was ein Zugang wert ist, hängt aber vom Format ab:
+        </p>
+        <ul className="list-disc list-inside space-y-1">
+          <li><strong className="text-white">Dynasty</strong>: Punkte plus Dynasty-Wert; Kadertiefe nach Dynasty-Wert; junge Spieler mit Draft-Kapital werden nie gedroppt.</li>
+          <li><strong className="text-white">Keeper</strong>: wie Dynasty, der Dynasty-Wert zählt halb.</li>
+          <li><strong className="text-white">Redraft</strong>: nur Punkte; Kadertiefe in Punkten pro Woche.</li>
+          <li><strong className="text-white">Chopped</strong>: nur Punkte, diese Woche zählt dreifach (3·2·1·1·1) — wer Letzter wird, fliegt.</li>
+        </ul>
       </Section>
 
       <Section title="Wetter-Regeln">
@@ -334,12 +408,8 @@ A         = Verfügbarkeit`}</Formula>
             über das Implied Team Total.
           </li>
           <li>
-            <strong className="text-white">Erwartete Punkte aus der Nutzung</strong>{" "}
-            (Targets, Red-Zone-Touches) als stabilere Form — geplant.
-          </li>
-          <li>
-            <strong className="text-white">Floor/Ceiling je nach deinem Matchup</strong> in
-            der Liga — geplant.
+            <strong className="text-white">Schon gespielte Spiele der laufenden Woche</strong>{" "}
+            zählen im Matchup-Vergleich mit ihrer Prognose, nicht mit den echten Punkten.
           </li>
         </ul>
         <p className="text-xs text-gray-500">

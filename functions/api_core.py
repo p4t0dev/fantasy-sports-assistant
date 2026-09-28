@@ -358,7 +358,21 @@ def usage_signals(sport, scoring_settings, players_db):
             # Doubtful counts: most of them sit, and the stand-in keeps the job.
             return signals.injury_signal(player, now_ms)["severity"] >= 2
 
-        return usage.build_usage(data["weeks"], players_db, score, is_out)
+        # xFP in this league's scoring, fitted on this season's played weeks.
+        rows = []
+        for week_rows in data["weeks"].values():
+            for pid, row in week_rows.items():
+                pos = (players_db.get(pid) or {}).get("position")
+                stats = row.get("stats") or {}
+                rows.append((forecast.group_of(pos), stats,
+                             calculate_custom_score(stats, pos, scoring_settings, sport)))
+        model = forecast.fit_xfp(rows)
+
+        def expected(pid, stats):
+            pos = (players_db.get(pid) or {}).get("position")
+            return forecast.xfp(stats, forecast.group_of(pos), model)
+
+        return usage.build_usage(data["weeks"], players_db, score, is_out, expected)
     except Exception as e:  # noqa: BLE001 - a missing signal, not a failed request
         print(f"Usage signals failed: {e}")
         return {}
@@ -970,14 +984,23 @@ def calculate_dvs(player, p_stats, college_data, signal=None, proj=None):
     return round(dvs, 1)
 
 
-def canonical_pos(player):
+def canonical_pos(player, allowed=None):
     """The position a league's roster slots address him by.
 
     Sleeper's `position` is the real-life one (CB, SS, DE, NT); the slots use
     `fantasy_positions` (DB, DL, LB). Displaying and grouping by the raw value
     is why cornerbacks never matched DB slots.
+
+    With `allowed` - the positions this league starts - it is the first of
+    his fantasy positions the league actually uses. Travis Hunter is listed
+    DB first and WR second; in a league without DB slots he was graded
+    against a DB replacement level that league does not have.
     """
     fantasy = player.get("fantasy_positions") or []
+    if allowed:
+        for pos in fantasy:
+            if pos in allowed:
+                return pos
     return fantasy[0] if fantasy else (player.get("position") or "UNK")
 
 
@@ -1018,7 +1041,7 @@ LEVEL_METRICS = ("dvs", "rvs", "pts")
 
 def replacement_levels(rosters, players, stats, college_data, sigs, req, num_teams,
                        sport="nfl", fallback_pool=True, projs=None,
-                       roster_positions=None, weekly=None):
+                       roster_positions=None, weekly=None, horizon_weights=None):
     """League-relative baseline per position: the value of the last player who
     would still be starting somewhere in this league.
 
@@ -1051,7 +1074,7 @@ def replacement_levels(rosters, players, stats, college_data, sigs, req, num_tea
         proj = (projs or {}).get(str(pid))
         pts = None
         if weekly:
-            pts = _week_fields(pid, player, sig, weekly, proj)["pts_pace"]
+            pts = _week_fields(pid, player, sig, weekly, proj, horizon_weights)["pts_pace"]
         if pts is None:
             pts = expected_points(player, p_stats, sig, proj)
         return {
@@ -1186,7 +1209,43 @@ def _start_value(player):
     return player.get("pts", 0) or 0
 
 
-def waiver_score(dvs, pts, sig, need_severity, replacement_pts=0):
+# How a league's format changes what a waiver move is for. Sleeper's
+# settings.type: 0 redraft, 1 keeper, 2 dynasty, 3 chopped (guillotine).
+#
+#   dvs_weight      share of dynasty value in the waiver score
+#   depth_metric    what a depth move compares above replacement: dynasty
+#                   value, or forecast points
+#   protect_youth   young players with draft capital are never drops
+#   horizon_weights how the weeks of the horizon count, this week first
+#
+# In a chopped league the lowest score is eliminated every week, and a
+# roster's future is worth exactly as much as surviving this week lets it
+# have: dynasty value is worthless, this week counts three times. A redraft
+# league ends in January: dynasty value is worthless, the weeks count alike.
+LEAGUE_PROFILES = {
+    "dynasty": {"label": "Dynasty", "dvs_weight": 0.25, "depth_metric": "dvs",
+                "protect_youth": True, "horizon_weights": None},
+    "keeper":  {"label": "Keeper", "dvs_weight": 0.12, "depth_metric": "dvs",
+                "protect_youth": True, "horizon_weights": None},
+    "redraft": {"label": "Redraft", "dvs_weight": 0.0, "depth_metric": "pts",
+                "protect_youth": False, "horizon_weights": None},
+    "chopped": {"label": "Chopped", "dvs_weight": 0.0, "depth_metric": "pts",
+                "protect_youth": False, "horizon_weights": [3, 2, 1, 1, 1]},
+}
+LEAGUE_TYPES = {0: "redraft", 1: "keeper", 2: "dynasty", 3: "chopped"}
+
+
+def league_profile(league):
+    """The waiver strategy for this league's format (dynasty when unknown)."""
+    settings = (league or {}).get("settings") or {}
+    key = LEAGUE_TYPES.get(settings.get("type"), "dynasty")
+    return {"key": key, **LEAGUE_PROFILES[key]}
+
+
+DYNASTY = {"key": "dynasty", **LEAGUE_PROFILES["dynasty"]}
+
+
+def waiver_score(dvs, pts, sig, need_severity, replacement_pts=0, profile=DYNASTY):
     """Waiver ranking is not dynasty ranking: usable value this season plus the
     news that just changed it. A rank-999 backup who inherits a starting job
     outranks a well-known name whose situation did not move.
@@ -1203,7 +1262,7 @@ def waiver_score(dvs, pts, sig, need_severity, replacement_pts=0):
     net = sig["trend"].get("net") or 0
 
     surplus = pts - (replacement_pts or 0)
-    base = max(0.0, surplus) + 0.35 * pts + 0.25 * dvs
+    base = max(0.0, surplus) + 0.35 * pts + profile["dvs_weight"] * dvs
 
     score = base * (1 + 0.25 * opportunity) * (1 + 0.35 * intensity)
     score += 40 * intensity    # live market heat: sharp, fires for a handful
@@ -1239,7 +1298,7 @@ def faab_recommendation(sig, need_severity, budget_left, is_upgrade):
     }
 
 
-def drop_protection(player, dvs, pts, sig, levels):
+def drop_protection(player, dvs, pts, sig, levels, profile=DYNASTY, pos=None):
     """Reasons never to recommend dropping someone.
 
     Guards the case that made the old engine suggest dropping Ricky Pearsall -
@@ -1254,10 +1313,10 @@ def drop_protection(player, dvs, pts, sig, levels):
     """
     years_exp = player.get("years_exp") or 0
     rank = player.get("search_rank") or 999999
-    level = levels.get(canonical_pos(player), {})
+    level = levels.get(pos or canonical_pos(player), {})
     threshold = level.get("dvs", 0)
 
-    if years_exp <= 2 and rank <= 600:
+    if profile["protect_youth"] and years_exp <= 2 and rank <= 600:
         return "Junges Asset mit Draft-Kapital — halten"
     # An ageing star has little dynasty value left but can still be a weekly
     # starter. Dropping him for a younger bench piece loses points right now.
@@ -1287,10 +1346,11 @@ def drop_protection(player, dvs, pts, sig, levels):
 # replace at each position, the same two numbers usually say the opposite.
 # ---------------------------------------------------------------------------
 
-def _dvs_edge(player, levels):
-    """Dynasty value above what this league replaces the position with."""
+def _dvs_edge(player, levels, metric="dvs"):
+    """Value above what this league replaces the position with - dynasty value,
+    or forecast points where dynasty value means nothing (see LEAGUE_PROFILES)."""
     level = (levels or {}).get(player["pos"], {})
-    return (player.get("dvs") or 0) - (level.get("dvs") or 0)
+    return (player.get(metric) or 0) - (level.get(metric) or 0)
 
 
 def _best_edge(value, positions, levels, metric):
@@ -1310,7 +1370,7 @@ def _best_edge(value, positions, levels, metric):
     return round(best or 0, 1), best_pos
 
 
-def _reserve_value(player, levels):
+def _reserve_value(player, levels, use_dvs=True):
     """How strongly a player claims one of his position's reserve spots.
 
     The better of what he gives the lineup now and what he is worth going
@@ -1322,7 +1382,7 @@ def _reserve_value(player, levels):
     level = (levels or {}).get(player["pos"], {})
     pts_ref, dvs_ref = level.get("pts") or 0, level.get("dvs") or 0
     now = (player.get("pts") or 0) / pts_ref if pts_ref > 0 else 0
-    later = (player.get("dvs") or 0) / dvs_ref if dvs_ref > 0 else 0
+    later = (player.get("dvs") or 0) / dvs_ref if dvs_ref > 0 and use_dvs else 0
     return max(now, later)
 
 
@@ -1334,7 +1394,7 @@ def _reserve_value(player, levels):
 SHORT_KINDS = {"empty", "below_level", "flex_gap"}
 
 
-def depth_reserves(roster, roster_positions, levels, needs=None):
+def depth_reserves(roster, roster_positions, levels, needs=None, profile=DYNASTY):
     """Players a position cannot spare, as {player id: positions he covers}.
 
     For each position, the best `demand` bodies eligible there - the ones that
@@ -1357,7 +1417,8 @@ def depth_reserves(roster, roster_positions, levels, needs=None):
     for pos, need in demand.items():
         keep = need + 1 if pos in short else need
         eligible = sorted((p for p in roster if pos in p["elig"]),
-                          key=lambda p: (-_reserve_value(p, levels),
+                          key=lambda p: (-_reserve_value(p, levels,
+                                                         profile["depth_metric"] == "dvs"),
                                          -(p.get("pts") or 0), p["id"]))
         for p in eligible[:keep]:
             reserved.setdefault(p["id"], set()).add(pos)
@@ -1372,7 +1433,7 @@ def _lineup_value(players, roster_positions):
 
 
 def plan_moves(my_players, available, roster_positions, levels, needs=None,
-               max_moves=5, target_pool=40, unit=None):
+               max_moves=5, target_pool=40, unit=None, profile=DYNASTY):
     """Plans a sequence of add/drop moves by simulating the actual lineup.
 
     A move is only worth making if the resulting starting lineup is better than
@@ -1391,7 +1452,7 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
     # unless the add lands at that same position. Severity used to gate this and
     # only at severity 3, which let every position the lineup override had
     # capped at 1 - the thin ones a manager complains about - be raided freely.
-    reserved = depth_reserves(roster, roster_positions, levels, needs)
+    reserved = depth_reserves(roster, roster_positions, levels, needs, profile)
 
     # Best few per position is plenty; scanning every waiver player would cost
     # a matching each without changing the answer.
@@ -1454,7 +1515,7 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
         roster = [p for p in roster if p["id"] != drop["id"]] + [target]
         used_targets.add(target["id"])
         used_drops.add(drop["id"])
-        reserved = depth_reserves(roster, roster_positions, levels, needs)
+        reserved = depth_reserves(roster, roster_positions, levels, needs, profile)
 
         divisor, label = unit or (1.0, "Punkte")
         shown = round(delta / divisor, 1)
@@ -1481,7 +1542,7 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
     if len(moves) < max_moves:
         moves.extend(_depth_moves(roster, pool, roster_positions, used_targets,
                                   used_drops, max_moves - len(moves), levels,
-                                  needs))
+                                  needs, profile=profile, unit=unit))
     return moves
 
 
@@ -1493,6 +1554,9 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
 # How much dynasty value a stash has to add, measured above each position's own
 # replacement level, before it is worth a roster spot and a claim.
 DEPTH_MOVE_MIN_EDGE = 25.0
+# The same floor where depth moves compare forecast points (redraft, chopped):
+# a season of one point a week - 17 in season-scale pace.
+DEPTH_MOVE_MIN_EDGE_PTS = 17.0
 # One recommendation set should not empty a position. Twice from a position the
 # roster is comfortable at is already generous; a flagged position gives up one
 # body at most, which is what stopped the board offering two of a manager's six
@@ -1512,7 +1576,7 @@ DEPTH_NEED_MIN_SEVERITY = 2
 
 
 def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit,
-                 levels=None, needs=None):
+                 levels=None, needs=None, profile=DYNASTY, unit=None):
     """Bench upgrades: swap the least valuable expendable player for a clearly
     better asset, when no move improves the starting lineup at all.
 
@@ -1532,6 +1596,8 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
       moves later.
     """
     moves = []
+    metric = profile["depth_metric"]
+    min_edge = DEPTH_MOVE_MIN_EDGE if metric == "dvs" else DEPTH_MOVE_MIN_EDGE_PTS
     severity = {n["pos"]: n["severity"] for n in (needs or [])}
     drops_per_pos, adds_per_pos = {}, {}
     # A sequence that adds a tight end for a lineman and then a lineman for a
@@ -1548,7 +1614,7 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
                           if p is not None}
 
     while len(moves) < limit:
-        reserved = depth_reserves(roster, roster_positions, levels, needs)
+        reserved = depth_reserves(roster, roster_positions, levels, needs, profile)
 
         droppable = []
         for p in roster:
@@ -1569,12 +1635,12 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
 
         # Worst first, but only as a search order - the pairing decides, because
         # the cheapest man to lose is not always the one with a legal upgrade.
-        droppable.sort(key=lambda p: _dvs_edge(p, levels))
+        droppable.sort(key=lambda p: _dvs_edge(p, levels, metric))
 
         best = None
         for drop in droppable[:8]:
             blocked = reserved.get(drop["id"], set())
-            drop_edge = _dvs_edge(drop, levels)
+            drop_edge = _dvs_edge(drop, levels, metric)
             for target in pool:
                 if target["id"] in used_targets:
                     continue
@@ -1591,8 +1657,8 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
                 # His position still needs him: only a like-for-like upgrade.
                 if blocked and not (blocked & target["elig"]):
                     continue
-                edge = _dvs_edge(target, levels) - drop_edge
-                if edge < DEPTH_MOVE_MIN_EDGE:
+                edge = _dvs_edge(target, levels, metric) - drop_edge
+                if edge < min_edge:
                     continue
                 short = max(0, severity.get(target["pos"], 0)
                             - DEPTH_NEED_MIN_SEVERITY + 1)
@@ -1612,7 +1678,7 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
             reinforced.add(target["pos"])
             thinned.add(drop["pos"])
 
-        why = [_depth_reason(target, drop, edge, severity, levels)]
+        why = [_depth_reason(target, drop, edge, severity, levels, metric, unit)]
         why.extend(target.get("signals", [])[:2])
 
         moves.append({
@@ -1626,7 +1692,8 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
                 "pos_out": drop["pos"],
                 "lineup_gain": 0.0,
                 "dvs_gain": round(target["dvs"] - drop["dvs"], 1),
-                "edge_gain": round(edge, 1),
+                "edge_gain": round(edge if metric == "dvs" else edge / (unit or (1.0,))[0], 1),
+                "edge_unit": "DVS" if metric == "dvs" else (unit or (1.0, "Punkte"))[1],
                 "starts": False,
                 "empty_slots": [],
             },
@@ -1648,7 +1715,7 @@ DEPTH_MOVES_NOTE = ("Kein Zugang verbessert aktuell deine Startelf. Die folgende
                     "beste verfügbare.")
 
 
-def _depth_reason(target, drop, edge, severity, levels):
+def _depth_reason(target, drop, edge, severity, levels, metric="dvs", unit=None):
     """Say what the move is, in the terms it was actually decided in.
 
     The old text quoted two raw DVS numbers side by side, which is exactly the
@@ -1658,15 +1725,25 @@ def _depth_reason(target, drop, edge, severity, levels):
     what it reports - and it says DVS, because these are dynasty-value units and
     calling them Punkte invited them to be read as projected scoring.
     """
-    t_edge, d_edge = _dvs_edge(target, levels), _dvs_edge(drop, levels)
+    t_edge = _dvs_edge(target, levels, metric)
+    d_edge = _dvs_edge(drop, levels, metric)
+    if metric == "dvs":
+        label, fmt = "DVS", _signed
+    else:
+        # Forecast points: per week in season, like every other number there.
+        divisor, label = unit or (1.0, "Punkte")
+        t_edge, d_edge = t_edge / divisor, d_edge / divisor
+
+        def fmt(value):
+            return f"{value:+.1f}"
 
     if drop["pos"] == target["pos"]:
         body = (f"Kadertiefe {target['pos']}: {target['name']} liegt "
-                f"{_signed(t_edge)} DVS zum {target['pos']}-Ersatzniveau, "
-                f"{drop['name']} {_signed(d_edge)}.")
+                f"{fmt(t_edge)} {label} zum {target['pos']}-Ersatzniveau, "
+                f"{drop['name']} {fmt(d_edge)}.")
     else:
-        body = (f"Kadertiefe: {target['name']} liegt {_signed(t_edge)} DVS zum "
-                f"{target['pos']}-Ersatzniveau, {drop['name']} {_signed(d_edge)} "
+        body = (f"Kadertiefe: {target['name']} liegt {fmt(t_edge)} {label} zum "
+                f"{target['pos']}-Ersatzniveau, {drop['name']} {fmt(d_edge)} "
                 f"zum {drop['pos']}-Ersatzniveau — und {drop['pos']} bleibt auch "
                 f"ohne ihn gedeckt.")
     if severity.get(target["pos"], 0) >= DEPTH_NEED_MIN_SEVERITY:
@@ -1756,6 +1833,7 @@ def _forecast_week(pid, player, sig, weekly, proj, i, locked=False):
     fc = forecast.forecast(
         pos, S,
         history=list((use or {}).get("pts_by_week", {}).values()),
+        xfp_history=list((use or {}).get("xfp_by_week", {}).values()),
         Q=forecast.quality(proj, *prev),
         usage_adj=None if locked or not use or not now else use["adj"],
         allowed=allowed.get((opp, group)), league_avg=league_avg.get(group),
@@ -1773,7 +1851,7 @@ def _forecast_week(pid, player, sig, weekly, proj, i, locked=False):
     return fc
 
 
-def _week_fields(pid, player, sig, weekly, proj=None):
+def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None):
     """This week's forecast and schedule for one player, or Nones off-season.
 
     `pts_week` is the forecast of functions/forecast.py - Sleeper's number,
@@ -1811,13 +1889,18 @@ def _week_fields(pid, player, sig, weekly, proj=None):
                         "pts": week_fc["P"] if week_fc else 0.0})
     pts_week = fc["P"] if fc else 0.0
     total = sum(h["pts"] for h in horizon)
+    # Weighted per week: a chopped league counts this week more than the
+    # ones it may not survive to (LEAGUE_PROFILES). Uniform otherwise.
+    w = (horizon_weights or [1] * len(horizon))[:len(horizon)]
+    w += [1] * (len(horizon) - len(w))
+    per_week = sum(wi * h["pts"] for wi, h in zip(w, horizon)) / sum(w)
 
     sleeper = (row[0] if row else 0.0) * (1.0 if locked else _week_availability(sig))
     return {
         "pts_week": pts_week,
         "pts_week_base": round(sleeper, 1),
         "pts_horizon": round(total, 1),
-        "pts_pace": round(total / len(weeks) * projections.SEASON_GAMES.get("nfl", 17), 1),
+        "pts_pace": round(per_week * projections.SEASON_GAMES.get("nfl", 17), 1),
         "horizon": horizon,
         "opp": opp,
         "bye": bool(byes) and byes[0] == weeks[0],
@@ -1827,7 +1910,8 @@ def _week_fields(pid, player, sig, weekly, proj=None):
         "locked": locked,
         "usage": ({"label": use["label"], "adj": use["adj"], "rank": use["rank"],
                    "snap_pct": use["snap_pct"], "avg_pts": use["avg_pts"],
-                   "pts_by_week": {str(w): p for w, p in use["pts_by_week"].items()}}
+                   "pts_by_week": {str(w): p for w, p in use["pts_by_week"].items()},
+                   "xfp_by_week": {str(w): x for w, x in (use.get("xfp_by_week") or {}).items()}}
                   if use else None),
         "forecast": ({k: fc[k] for k in ("P", "B", "K", "A", "S", "F", "n", "Q",
                                          "weights", "R", "M", "W", "explain")}
@@ -1836,7 +1920,7 @@ def _week_fields(pid, player, sig, weekly, proj=None):
 
 
 def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None,
-                  weekly=None, horizon_pts=False):
+                  weekly=None, horizon_pts=False, horizon_weights=None, positions=None):
     """One enriched player record, keyed by the positions the league's slots use.
 
     With `horizon_pts` - the waiver board - `pts` is the forecast pace over the
@@ -1854,7 +1938,7 @@ def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, pro
     entry = {
         "id": str(pid),
         "name": f"{player.get('first_name')} {player.get('last_name')}",
-        "pos": canonical_pos(player),
+        "pos": canonical_pos(player, positions),
         "elig": lineup.player_positions(player),
         "real_pos": player.get("position"),
         "team": player.get("team") or "FA",
@@ -1874,7 +1958,7 @@ def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, pro
         "opportunity": sig["opportunity"] if sig else None,
         "news_days": sig["recency"]["news_days"] if sig else None,
     }
-    entry.update(_week_fields(pid, player, sig, weekly, proj))
+    entry.update(_week_fields(pid, player, sig, weekly, proj, horizon_weights))
     if horizon_pts and entry["pts_pace"] is not None:
         entry["pts_season"] = pts
         entry["pts"] = entry["pts_pace"]
@@ -1914,6 +1998,8 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     scoring_settings = league_info.get("scoring_settings") or {}
     league_settings = league_info.get("settings") or {}
     num_teams = league_info.get("total_rosters") or 12
+    profile = league_profile(league_info)
+    hw = profile["horizon_weights"]
     waiver_budget = (league_settings.get("waiver_budget")
                      if league_settings.get("waiver_type") == 2 else None)
 
@@ -1938,7 +2024,11 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
                                 signals_by_pid, req, num_teams, sport, projs=projs,
-                                roster_positions=roster_positions, weekly=weekly)
+                                roster_positions=roster_positions, weekly=weekly,
+                                horizon_weights=hw)
+
+    # Anyone whose eligibility touches a slot this league actually starts.
+    league_positions = set(lineup.positions_in_use(roster_positions))
 
     # ---- My roster -------------------------------------------------------
     my_players_stats = []
@@ -1948,8 +2038,11 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
             continue
         sig = signals_by_pid.get(str(pid))
         entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs,
-                              weekly=weekly, horizon_pts=True)
-        entry["protected"] = drop_protection(p, entry["dvs"], entry["pts"], sig, levels) if sig else None
+                              weekly=weekly, horizon_pts=True,
+                              horizon_weights=hw, positions=league_positions)
+        entry["protected"] = (drop_protection(p, entry["dvs"], entry["pts"], sig, levels,
+                                              profile, entry["pos"])
+                              if sig else None)
         entry["is_liability"] = (entry["pts"] < levels.get(entry["pos"], {}).get("pts", 0)
                                  and not entry["protected"])
         my_players_stats.append(entry)
@@ -1959,8 +2052,6 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     need_by_pos = {n["pos"]: n for n in needs}
 
     # ---- Available players ----------------------------------------------
-    # Anyone whose eligibility touches a slot this league actually starts.
-    league_positions = set(lineup.positions_in_use(roster_positions))
     roster_depth = roster_depth_overview(my_players_stats, roster_positions,
                                          levels, league_positions)
 
@@ -1985,13 +2076,14 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
             continue
 
         entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs,
-                              weekly=weekly, horizon_pts=True)
+                              weekly=weekly, horizon_pts=True,
+                              horizon_weights=hw, positions=league_positions)
         pos = entry["pos"]
         severity = need_by_pos.get(pos, {}).get("severity", 0)
         replacement_pts = levels.get(pos, {}).get("pts", 0)
         entry["is_upgrade"] = entry["pts"] >= replacement_pts
         entry["score"] = waiver_score(entry["dvs"], entry["pts"], sig, severity,
-                                      replacement_pts)
+                                      replacement_pts, profile)
         entry["faab"] = faab_recommendation(sig, severity, budget_left, entry["is_upgrade"])
         available.append(entry)
 
@@ -2008,7 +2100,7 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
         board.append(p)
 
     recommendations = plan_moves(my_players_stats, available, roster_positions, levels, needs,
-                                 unit=PACE_UNIT if weekly else None)
+                                 unit=PACE_UNIT if weekly else None, profile=profile)
 
     state = sleeper_api.get_state(sport) or {}
     activity = signals.league_activity(league_id, state.get("week") or 1, players)
@@ -2041,7 +2133,9 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
         "positions": sorted(league_positions),
         # What `pts` means on this board: forecast pace over these weeks, or
         # the season projection off-season.
-        "horizon": {"weeks": weekly["weeks"]} if weekly else None,
+        "horizon": ({"weeks": weekly["weeks"], "weights": hw} if weekly else None),
+        # The waiver strategy for this format, so the page can say which.
+        "profile": {"key": profile["key"], "label": profile["label"]},
         "faab": {"budget": waiver_budget, "left": budget_left,
                  "waiver_type": league_settings.get("waiver_type")},
         "league_activity": activity,
@@ -2195,15 +2289,88 @@ ISSUE_BENCH_GAIN_URGENT = 5.0
 FORECAST_NOTE_GAP = 1.0
 
 
-def close_calls(changes):
-    """Recommended swaps whose two forecasts are a coin flip apart."""
+# Ahead or behind by this much in your own matchup, a close call is decided by
+# risk instead of by the tenth of a point between two forecasts.
+FAVORITE_MARGIN = 10.0
+
+
+def _spread_of(player):
+    weeks = list(((player.get("usage") or {}).get("pts_by_week") or {}).values())
+    return forecast.spread(player.get("real_pos") or player.get("pos"), weeks)
+
+
+def close_calls(changes, stance=None):
+    """Recommended swaps whose two forecasts are a coin flip apart - and which
+    of the two to take given where you stand in your matchup.
+
+    A favourite needs a floor: the likely win is lost by a bad week, not won
+    by a great one, so the steadier player is the one to start. An underdog
+    needs the opposite, a ceiling. In between it stays a coin flip. The
+    optimal lineup itself is never changed by this - it is advice on the one
+    decision the forecast cannot make.
+    """
     out = []
     for change in changes:
         a, b = change.get("in"), change.get("out")
-        if a and b and abs((a.get("pts_week") or 0) - (b.get("pts_week") or 0)) < forecast.CLOSE_CALL:
-            out.append({"in": a["name"], "out": b["name"],
-                        "gap": round(a["pts_week"] - b["pts_week"], 1)})
+        if not (a and b) or abs((a.get("pts_week") or 0) - (b.get("pts_week") or 0)) >= forecast.CLOSE_CALL:
+            continue
+        sa, sb = _spread_of(a), _spread_of(b)
+        call = {"in": a["name"], "out": b["name"],
+                "gap": round(a["pts_week"] - b["pts_week"], 1),
+                "spread_in": sa, "spread_out": sb, "pick": None, "advice": None}
+        kind = (stance or {}).get("kind")
+        if kind in ("favorite", "chopped") and abs(sa - sb) >= 0.5:
+            steady = a if sa < sb else b
+            call["pick"] = steady["name"]
+            reason = ("Chopped: nicht Letzter werden" if kind == "chopped"
+                      else f"Favorit ({stance['margin']:+.1f})")
+            call["advice"] = (f"{reason} - nimm den sichereren Spieler: {steady['name']} "
+                              f"(±{min(sa, sb)} statt ±{max(sa, sb)})")
+        elif kind == "underdog" and abs(sa - sb) >= 0.5:
+            wild = a if sa > sb else b
+            call["pick"] = wild["name"]
+            call["advice"] = (f"Außenseiter ({stance['margin']:+.1f}) - du brauchst Potenzial: "
+                              f"{wild['name']} (±{max(sa, sb)} statt ±{min(sa, sb)})")
+        out.append(call)
     return out
+
+
+def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_total, week):
+    """Where you stand this week: your best lineup against your opponent's.
+
+    Both through the same forecast. The opponent is credited with his best
+    lineup, not the one he has set - a manager who has not set his lineup on
+    Friday usually has by Sunday. A chopped league has no opponent: the only
+    thing that matters is not being last, so it always plays for the floor.
+    """
+    if ((league or {}).get("settings") or {}).get("type") == 3:
+        return {"kind": "chopped", "margin": None, "opponent": None,
+                "my_total": my_total, "opp_total": None}
+    matchups = sleeper_api.get_matchups(league["league_id"], week) or []
+    mine = next((m for m in matchups if m.get("roster_id") == my_roster.get("roster_id")), None)
+    if not mine or mine.get("matchup_id") is None:
+        return None
+    opp_row = next((m for m in matchups if m.get("matchup_id") == mine["matchup_id"]
+                    and m.get("roster_id") != mine.get("roster_id")), None)
+    opp_roster = next((r for r in rosters if opp_row and r.get("roster_id") == opp_row["roster_id"]), None)
+    if not opp_roster:
+        return None
+    players, college_data, stats, signals_by_pid, projs, weekly = inputs
+    squad = []
+    for pid in opp_roster.get("players") or []:
+        p = players.get(str(pid))
+        if p:
+            squad.append(_player_entry(pid, p, stats, college_data, signals_by_pid.get(str(pid)),
+                                       None, projs=projs, weekly=weekly))
+    opp_total = best_lineup_now(squad, roster_positions,
+                                current_lineup(opp_roster, roster_positions, squad))["total"]
+    users = {u["user_id"]: u.get("display_name") or u.get("username")
+             for u in sleeper_api.get_users_in_league(league["league_id"]) or []}
+    margin = round(my_total - opp_total, 1)
+    kind = ("favorite" if margin >= FAVORITE_MARGIN
+            else "underdog" if margin <= -FAVORITE_MARGIN else "even")
+    return {"kind": kind, "margin": margin, "opponent": users.get(opp_roster.get("owner_id")),
+            "my_total": my_total, "opp_total": round(opp_total, 1)}
 
 
 def lineup_issues(current, gain):
@@ -2238,7 +2405,7 @@ def lineup_issues(current, gain):
     return issues
 
 
-def _lineup_analysis(my_roster, roster_positions, inputs):
+def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=None):
     """Current lineup, best lineup still possible, and the gap between them.
 
     Shared by the optimizer page and the cross-league overview, so both give
@@ -2300,6 +2467,13 @@ def _lineup_analysis(my_roster, roster_positions, inputs):
         key=lambda n: (not n["starting"], -abs(n["pts_week"] - n["pts_week_base"])))
 
     changes = lineup_changes(current, report["slots"], _week_value)
+    stance = None
+    if league and rosters and weekly:
+        try:
+            stance = matchup_stance(league, my_roster, rosters, roster_positions, inputs,
+                                    report["total"], weekly["week"])
+        except Exception as e:  # noqa: BLE001 - advice, never a failed request
+            print(f"Matchup stance failed: {e}")
     current_total = round(
         sum(_week_value(s["player"]) for s in current if s["player"]), 1)
     gain = round(report["total"] - current_total, 1)
@@ -2319,7 +2493,8 @@ def _lineup_analysis(my_roster, roster_positions, inputs):
         "empty": report["empty"],
         "warnings": warnings,
         "forecast_notes": forecast_notes,
-        "close_calls": close_calls(changes),
+        "matchup": stance,
+        "close_calls": close_calls(changes, stance),
         "issues": lineup_issues(current, gain),
         "positions": sorted(lineup.positions_in_use(roster_positions)),
     }
@@ -2349,7 +2524,8 @@ def optimize_lineup_api(username, league_id, sport="nfl"):
         return {"error": "Dein Roster in dieser Liga ist leer."}
 
     result = _lineup_analysis(my_roster, roster_positions,
-                              _model_inputs(sport, scoring_settings))
+                              _model_inputs(sport, scoring_settings),
+                              league=league_info, rosters=rosters)
     result["league"] = {"name": league_info.get("name"), "teams": num_teams}
     return result
 
@@ -2433,13 +2609,14 @@ def lineup_overview_api(username, sport="nfl"):
         if key not in by_scoring:
             by_scoring[key] = _model_inputs(sport, scoring, base)
         analysis = _lineup_analysis(my_roster, league.get("roster_positions") or [],
-                                    by_scoring[key])
+                                    by_scoring[key], league=league, rosters=rosters)
         week = week or analysis["week"]
         entry.update({
             "issues": analysis["issues"],
             "changes": analysis["changes"],
             "forecast_notes": analysis["forecast_notes"],
             "close_calls": analysis["close_calls"],
+            "matchup": analysis["matchup"],
             "current_total": analysis["current_total"],
             "total": analysis["total"],
             "gain": analysis["gain"],
@@ -2917,7 +3094,7 @@ def analyze_draft_api(username, draft_id, sport="nfl"):
         rvs = calculate_rvs(p, p_stats, sig, proj)
         dvs = calculate_dvs(p, p_stats, college_data, sig, proj)
         pts = expected_points(p, p_stats, sig, proj)
-        pos = canonical_pos(p)
+        pos = canonical_pos(p, league_positions)
 
         trade_value = dvs
         try:

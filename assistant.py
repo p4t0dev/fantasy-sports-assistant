@@ -108,9 +108,12 @@ def show_overview(username, sport):
                 label = (player.get("usage") or {}).get("label")
                 if label:
                     print(f"             Nutzung {label}")
+        m = league.get("matchup")
+        if m and m.get("opponent"):
+            print(f"      MATCHUP vs {m['opponent']}: {m['my_total']} : {m['opp_total']} ({m['margin']:+})")
         for call in league.get("close_calls") or []:
-            print(f"      KNAPP: {call['in']} vs. {call['out']} ({call['gap']:+} Pkt) - Münzwurf, "
-                  "entscheide nach Gefühl oder Matchup")
+            print(f"      KNAPP: {call['in']} vs. {call['out']} ({call['gap']:+} Pkt) - "
+                  + (call.get("advice") or "Münzwurf, entscheide nach Gefühl"))
         notes = [n for n in league.get("forecast_notes") or [] if n["starting"]]
         if notes:
             print("      Starter, bei denen die Prognose von Sleeper abweicht:")

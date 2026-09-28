@@ -44,7 +44,7 @@ def _usage_key(pos, stats):
     return (snaps, targets)
 
 
-def week_games(week_rows, players, score):
+def week_games(week_rows, players, score, expected=None):
     """One played week as {pid: game}, each ranked inside his team's position group.
 
     `week_rows` is {pid: {"team", "stats"}}, `score(pid, stats)` scores a box
@@ -69,6 +69,8 @@ def week_games(week_rows, players, score):
             "targets": int(stats.get("rec_tgt") or 0),
             "touches": int((stats.get("rush_att") or 0) + (stats.get("rec") or 0)),
             "pts": round(score(str(pid), stats), 1),
+            # What this game's usage was worth on average (forecast.xfp).
+            "xfp": expected(str(pid), stats) if expected else None,
             "_key": _usage_key(pos, stats),
             # Points only: a kicker or a linebacker has no "moved up to WR2".
             "rank": None, "ahead": [], "group": [],
@@ -153,6 +155,7 @@ def usage_signal(pid, player, history, latest_week, is_out):
         "avg_pts": avg_pts,
         "last_pts": last["pts"],
         "pts_by_week": {w: g["pts"] for w, g in history},
+        "xfp_by_week": {w: g.get("xfp") for w, g in history},
         "adj": adj,
     }
 
@@ -197,7 +200,7 @@ def usage_label(sig, pos, names=None):
     return f"W{sig['last_week']}: " + ", ".join(parts)
 
 
-def build_usage(week_stats, players, score, is_out):
+def build_usage(week_stats, players, score, is_out, expected=None):
     """Role signal for every player with a played game, keyed by player id.
 
     `week_stats` is {week: {pid: {"team", "stats"}}} for the weeks already
@@ -206,7 +209,8 @@ def build_usage(week_stats, players, score, is_out):
     weeks = sorted(int(w) for w in (week_stats or {}))
     if not weeks:
         return {}
-    per_week = {w: week_games(week_stats.get(w) or week_stats.get(str(w)), players, score)
+    per_week = {w: week_games(week_stats.get(w) or week_stats.get(str(w)), players, score,
+                              expected)
                 for w in weeks}
 
     history = {}

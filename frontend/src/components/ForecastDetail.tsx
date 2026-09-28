@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { Player } from "@/lib/types";
+import type { CloseCall, MatchupStance, Player } from "@/lib/types";
 
 // Every forecast on the site can be taken apart right where it is shown.
 // A number that says "13.2" and a Sleeper app that says "9.0" is a question
@@ -88,6 +88,18 @@ export function ForecastDetail({ player }: { player: Player }) {
             ))}
           </div>
         )}
+        {weeks.length > 0 && player.usage?.xfp_by_week && (
+          <div className="text-gray-400">
+            Erwartet aus Nutzung:{" "}
+            {Object.entries(player.usage.xfp_by_week)
+              .filter(([, x]) => x != null)
+              .map(([w, x]) => (
+                <span key={w} className="mr-2">
+                  W{w} <span className="text-gray-200">{x}</span>
+                </span>
+              ))}
+          </div>
+        )}
         {player.usage?.label && <div className="text-gray-500">Nutzung {player.usage.label}</div>}
         <Link href="/prognose" className="inline-block text-blue-400 hover:text-blue-300">
           So funktioniert die Prognose →
@@ -155,5 +167,60 @@ export function HorizonDetail({ player }: { player: Player }) {
         </Link>
       </div>
     </details>
+  );
+}
+
+const STANCE_TEXT: Record<MatchupStance["kind"], string> = {
+  favorite: "Favorit — bei knappen Entscheidungen den sicheren Spieler",
+  underdog: "Außenseiter — bei knappen Entscheidungen den mit Potenzial",
+  even: "offenes Duell — knappe Entscheidungen bleiben Münzwurf",
+  chopped: "Chopped — nicht Letzter werden, also immer den sicheren Spieler",
+};
+
+/** Your matchup this week, in one line. */
+export function MatchupLine({
+  stance,
+  compact = false,
+}: {
+  stance?: MatchupStance | null;
+  /** Score line only, without the advice sentence. */
+  compact?: boolean;
+}) {
+  if (!stance) return null;
+  const tone =
+    stance.kind === "favorite" ? "text-emerald-300" : stance.kind === "underdog" ? "text-orange-300" : "text-gray-300";
+  return (
+    <p className="text-xs text-gray-400">
+      {stance.opponent ? (
+        <>
+          Matchup vs <span className="text-gray-200">{stance.opponent}</span>:{" "}
+          <span className="text-gray-200">{stance.my_total}</span> :{" "}
+          <span className="text-gray-200">{stance.opp_total}</span>{" "}
+          <span className={tone}>
+            ({(stance.margin ?? 0) > 0 ? "+" : ""}
+            {stance.margin})
+          </span>
+          {!compact && <> · {STANCE_TEXT[stance.kind]}</>}
+        </>
+      ) : (
+        <span className={tone}>{STANCE_TEXT[stance.kind]}</span>
+      )}
+    </p>
+  );
+}
+
+/** Close calls, with the pick the matchup suggests. */
+export function CloseCalls({ calls }: { calls?: CloseCall[] }) {
+  if (!calls?.length) return null;
+  return (
+    <ul className="space-y-1 text-xs text-yellow-300/90">
+      {calls.map((c, i) => (
+        <li key={i}>
+          Knapp: {c.in} vs. {c.out} ({c.gap > 0 ? "+" : ""}
+          {c.gap} Pkt) —{" "}
+          {c.advice ?? "ein Münzwurf, entscheide nach Matchup oder Bauchgefühl."}
+        </li>
+      ))}
+    </ul>
   );
 }
