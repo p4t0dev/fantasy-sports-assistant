@@ -109,7 +109,8 @@ def fetch_week_projections(sport, season, week):
     test.
 
     Returns {"stats": {pid: stats}, "opp": {team: opponent}, "date": {team:
-    "YYYY-MM-DD"}}, or None when the fetch failed. An empty week (preseason,
+    "YYYY-MM-DD"}}, or None when the fetch failed. A row Sleeper did not
+    project is left out, not stored as zero. An empty week (preseason,
     or past the end of the schedule) comes back as empty dicts, not None.
     """
     rows = _fetch_rows(sport, f"{season}/{week}")
@@ -127,8 +128,11 @@ def fetch_week_projections(sport, season, week):
         p_stats = row.get("stats")
         if pid is None or not p_stats:
             continue
-        stats[str(pid)] = {k: v for k, v in p_stats.items()
-                           if not k.startswith(_DROP_PREFIXES)}
+        kept = {k: v for k, v in p_stats.items() if not k.startswith(_DROP_PREFIXES)}
+        # An unprojected row carries only the draft market fields. Kept as
+        # an empty dict it scored 0.0 and passed for "projected, and zero".
+        if kept:
+            stats[str(pid)] = kept
     return {"stats": stats, "opp": opp, "date": date}
 
 

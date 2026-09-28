@@ -76,7 +76,10 @@ export default function NeedCard({ need }: { need: Need }) {
             ))}
             {need.replacement != null && (
               <li className="flex items-baseline justify-between gap-3 text-[11px] pt-1 border-t border-gray-700/60">
-                <span className="text-gray-500">Liga-Startniveau {need.pos}</span>
+                <span className="text-gray-500">
+                  Liga-Startniveau {need.pos}
+                  {need.unit ? ` · ${need.unit}` : ""}
+                </span>
                 <span className="font-mono text-gray-400">{need.replacement}</span>
               </li>
             )}

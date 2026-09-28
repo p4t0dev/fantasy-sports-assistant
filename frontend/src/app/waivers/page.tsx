@@ -22,6 +22,7 @@ import {
   SlotBadge,
 } from "@/components/PlayerBadges";
 import NeedCard from "@/components/NeedCard";
+import { HorizonDetail, waiverPts } from "@/components/ForecastDetail";
 import { PosFilter, SortBar, sortBy, type SortOption } from "@/components/Controls";
 
 type Balance = {
@@ -57,6 +58,8 @@ type WaiverData = {
   lineup: { slots: LineupSlot[]; bench: Player[]; total: number; empty: string[] };
   positions: string[];
   faab: { budget: number | null; left: number | null; waiver_type: number | null };
+  /** The weeks `pts` is forecast over; null off-season (season projection). */
+  horizon?: { weeks: number[] } | null;
 };
 
 // The board answers more than one question, so it gets more than one order.
@@ -64,7 +67,7 @@ type WaiverData = {
 // board, which sorts by dynasty value — both are right, for different questions.
 const TARGET_SORTS: readonly SortOption<Player>[] = [
   { id: "score", label: "Waiver-Score", of: (p) => p.score ?? 0 },
-  { id: "pts", label: "Projektion", of: (p) => p.pts ?? 0 },
+  { id: "pts", label: "Prognose", of: (p) => p.pts ?? 0 },
   { id: "dvs", label: "Dynasty (DVS)", of: (p) => p.dvs ?? 0 },
 ];
 
@@ -72,7 +75,7 @@ const TARGET_SORTS: readonly SortOption<Player>[] = [
 // first, and re-sorting them descending would bury the whole point of the list.
 const DROP_SORTS: readonly SortOption<Player>[] = [
   { id: "order", label: "Drop-Priorität", of: () => 0, asc: true },
-  { id: "pts", label: "Projektion", of: (p) => p.pts ?? 0, asc: true },
+  { id: "pts", label: "Prognose", of: (p) => p.pts ?? 0, asc: true },
   { id: "dvs", label: "Dynasty (DVS)", of: (p) => p.dvs ?? 0, asc: true },
 ];
 
@@ -149,10 +152,11 @@ function RosterRow({
               {player.team} • Age {player.age}
             </div>
             <SignalBadges player={player} />
+            <HorizonDetail player={player} />
           </div>
           <div className="flex flex-col items-end shrink-0">
-            <span className="text-sm font-bold text-blue-300">{player.pts}</span>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider">Proj</span>
+            <span className="text-sm font-bold text-blue-300">{waiverPts(player).value}</span>
+            <span className="text-[10px] text-gray-500 uppercase tracking-wider">{waiverPts(player).unit}</span>
           </div>
         </div>
       ) : (
@@ -310,6 +314,16 @@ function WaiversContent() {
               </>
             )}
           </p>
+          {data?.horizon?.weeks?.length ? (
+            <p className="text-xs text-gray-500 mt-1">
+              Punkte auf dieser Seite: unsere Prognose, Ø pro Woche über W
+              {data.horizon.weeks[0]}–{data.horizon.weeks[data.horizon.weeks.length - 1]} (Bye
+              zählt 0) — dieselbe Prognose wie in der Aufstellung.{" "}
+              <Link href="/prognose" className="text-blue-400 hover:text-blue-300">
+                So entsteht sie →
+              </Link>
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -386,6 +400,7 @@ function WaiversContent() {
                     Startaufstellung{" "}
                     <span className="text-green-400 font-medium">
                       +{rec.balance.lineup_gain}
+                      {data?.horizon ? " Pkt/Woche" : ""}
                     </span>
                     {rec.balance.starts ? (
                       <span className="text-gray-500"> · steht sofort in der Startelf</span>
@@ -415,11 +430,12 @@ function WaiversContent() {
                       {rec.add.team} • Age {rec.add.age}
                     </span>
                     <TrendBadge player={rec.add} />
+                    <HorizonDetail player={rec.add} />
                   </div>
                   <div className="flex gap-3 text-right shrink-0">
                     <div className="flex flex-col">
-                      <span className="text-blue-300 font-bold">{rec.add.pts}</span>
-                      <span className="text-[10px] text-gray-500 uppercase">Proj</span>
+                      <span className="text-blue-300 font-bold">{waiverPts(rec.add).value}</span>
+                      <span className="text-[10px] text-gray-500 uppercase">{waiverPts(rec.add).unit}</span>
                     </div>
                     <div className="flex flex-col">
                       <span className="text-green-400 font-bold">{rec.add.dvs}</span>
@@ -436,11 +452,12 @@ function WaiversContent() {
                       {rec.drop.name}
                     </span>
                     <span className="text-gray-400 text-xs">{rec.drop.team}</span>
+                    <HorizonDetail player={rec.drop} />
                   </div>
                   <div className="flex gap-3 text-right shrink-0">
                     <div className="flex flex-col">
-                      <span className="text-gray-300 font-bold">{rec.drop.pts}</span>
-                      <span className="text-[10px] text-gray-500 uppercase">Proj</span>
+                      <span className="text-gray-300 font-bold">{waiverPts(rec.drop).value}</span>
+                      <span className="text-[10px] text-gray-500 uppercase">{waiverPts(rec.drop).unit}</span>
                     </div>
                     <div className="flex flex-col">
                       <span className="text-red-400 font-bold">{rec.drop.dvs}</span>
@@ -557,14 +574,15 @@ function WaiversContent() {
                       {player.team} • Age {player.age}
                     </p>
                     <SignalBadges player={player} />
+                    <HorizonDetail player={player} />
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-2 shrink-0">
                   <FaabPill faab={player.faab} />
                   <div className="flex gap-3 text-right">
                     <div className="flex flex-col">
-                      <span className="text-sm font-bold text-blue-300">{player.pts}</span>
-                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">Proj</span>
+                      <span className="text-sm font-bold text-blue-300">{waiverPts(player).value}</span>
+                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">{waiverPts(player).unit}</span>
                     </div>
                     <div className="flex flex-col">
                       <span className="text-sm font-bold text-green-400">{player.dvs}</span>
@@ -627,12 +645,13 @@ function WaiversContent() {
                       <p className="text-xs text-amber-300/90 mt-1">{player.protected}</p>
                     )}
                     <SignalBadges player={player} />
+                    <HorizonDetail player={player} />
                   </div>
                 </div>
                 <div className="flex gap-3 text-right shrink-0">
                   <div className="flex flex-col">
-                    <span className="text-sm font-bold text-blue-300">{player.pts}</span>
-                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">Proj</span>
+                    <span className="text-sm font-bold text-blue-300">{waiverPts(player).value}</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">{waiverPts(player).unit}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-sm font-bold text-white">{player.dvs}</span>

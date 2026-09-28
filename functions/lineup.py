@@ -276,7 +276,14 @@ def _need_kind(empty, startable, own, demand, spare):
     return "no_backup", 1
 
 
-def positional_needs(players, roster_positions, replacement, value_of, slots_per_pos=None):
+# How needs print their points: divide by this, name them so. Off-season the
+# values are season projections; on the in-season waiver board they are the
+# forecast pace, shown per week (see api_core.roster_needs).
+SEASON_UNIT = (1.0, "Proj-Punkte")
+
+
+def positional_needs(players, roster_positions, replacement, value_of, slots_per_pos=None,
+                     unit=SEASON_UNIT):
     """Where does this roster actually need help?
 
     Two independent signals, because they answer different questions:
@@ -362,11 +369,12 @@ def positional_needs(players, roster_positions, replacement, value_of, slots_per
             "surplus": stat["surplus"],
             "spare": stat["spare"],
             "fixed_slots": stat["fixed"],
-            "replacement": round(baseline, 1),
-            "top": [{"name": p.get("name"), "value": round(value_of(p), 1),
+            "replacement": round(baseline / unit[0], 1),
+            "unit": unit[1],
+            "top": [{"name": p.get("name"), "value": round(value_of(p) / unit[0], 1),
                      "startable": value_of(p) >= baseline}
                     for p in sample],
-            "reason": _reason(pos, kind, stat, empty, gain_severity),
+            "reason": _reason(pos, kind, stat, empty, gain_severity, unit),
         })
 
     needs.sort(key=lambda n: (-n["severity"], -n["gain"]))
@@ -385,7 +393,7 @@ def _slot_text(fixed, demand):
     return "nur FLEX-Plätze"
 
 
-def _reason(pos, kind, stat, empty=0, gain_severity=0):
+def _reason(pos, kind, stat, empty=0, gain_severity=0, unit=SEASON_UNIT):
     """One sentence naming the situation, then the headcount behind it.
 
     The conclusion leads, the headcount follows: "0 von 5 über Startniveau" in
@@ -395,7 +403,8 @@ def _reason(pos, kind, stat, empty=0, gain_severity=0):
     """
     startable, eligible = stat["startable"], stat["eligible"]
     detail = (f"{startable} von {eligible} {pos}-fähigen Spielern über "
-              f"Liga-Startniveau ({stat['replacement']:.0f} Proj-Punkte), "
+              f"Liga-Startniveau ({stat['replacement'] / unit[0]:.{0 if unit[0] == 1 else 1}f} "
+              f"{unit[1]}), "
               f"{_slot_text(stat['fixed'], stat['demand'])}")
 
     if kind == "empty":
