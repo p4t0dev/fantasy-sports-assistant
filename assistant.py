@@ -123,6 +123,34 @@ def show_overview(username, sport):
     return 0
 
 
+def show_waiver_overview(username, sport):
+    """Every league's waiver plan, upgrades first."""
+    result = api_core.waiver_overview_api(username, sport)
+    if "error" in result:
+        print(f"Fehler: {result['error']}")
+        return 1
+    print("\n--- WAIVER, ALLE LIGEN (Pkt/Woche über die nächsten 5 Wochen) ---")
+    for league in result["leagues"]:
+        if league["skipped"]:
+            print(f"\n  {league['name']}: übersprungen ({league.get('error') or league['skipped']})")
+            continue
+        s = league["schedule"]
+        faab = league.get("faab") or {}
+        money = f", {faab['left']} von {faab['budget']} FAAB" if faab.get("left") is not None else ""
+        when = f"täglich, Hauptlauf {s['day']}" if s["daily"] else s["day"]
+        print(f"\n  {league['name']} [{league['profile']['label']}] "
+              f"{'FAAB' if s['kind'] == 'faab' else 'Priorität'} {when}{money}")
+        for m in league["moves"]:
+            bid = f"  ({m['faab']['min']}-{m['faab']['max']} FAAB)" if m["faab"] else ""
+            gain = (f"Startelf +{m['lineup_gain']}" if m["kind"] == "lineup"
+                    else f"Tiefe +{m['edge_gain']} {m['edge_unit'] or ''}")
+            print(f"      {gain:<22} ADD {m['add']['name']} ({m['add']['pos']} {m['add']['per_week']})"
+                  f"  DROP {m['drop']['name']} ({m['drop']['pos']} {m['drop']['per_week']}){bid}")
+        if not league["moves"]:
+            print("      nichts zu tun")
+    return 0
+
+
 def show_draft(username, draft_id, sport, position=None):
     result = api_core.analyze_draft_api(username, draft_id, sport)
     if "error" in result:
@@ -181,7 +209,7 @@ def main():
     parser.add_argument("--position", help="Board auf eine Position filtern (z. B. TE)")
     parser.add_argument("--waivers", action="store_true", help="Waiver-Assistent")
     parser.add_argument("--overview", action="store_true",
-                        help="Aufstellungs-Check über alle Ligen der laufenden Saison")
+                        help="Aufstellungs-Check und Waiver-Plan über alle Ligen der laufenden Saison")
     parser.add_argument("--update", action="store_true", help="Spieler- und Statsdaten aktualisieren")
 
     args = parser.parse_args()
@@ -199,7 +227,7 @@ def main():
         return show_waivers(args.username, args.league_id, args.sport)
 
     if args.overview:
-        return show_overview(args.username, args.sport)
+        return show_overview(args.username, args.sport) or show_waiver_overview(args.username, args.sport)
 
     if args.draft_id:
         return show_draft(args.username, args.draft_id, args.sport, args.position)

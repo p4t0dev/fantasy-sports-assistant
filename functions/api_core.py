@@ -1553,6 +1553,8 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
 #
 # How much dynasty value a stash has to add, measured above each position's own
 # replacement level, before it is worth a roster spot and a claim.
+# Positions nobody carries depth at: swapped only for their own kind.
+SINGLE_SLOT_POS = {"K", "DEF"}
 DEPTH_MOVE_MIN_EDGE = 25.0
 # The same floor where depth moves compare forecast points (redraft, chopped):
 # a season of one point a week - 17 in season-scale pace.
@@ -1650,6 +1652,13 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
                 if not (target.get("pts") or 0) > 0:
                     continue
                 if adds_per_pos.get(target["pos"], 0) >= DEPTH_ADDS_PER_POS:
+                    continue
+                # Nobody stashes a second kicker or defense for depth. Their
+                # replacement level sits so low that any of them read as a
+                # huge edge: Trey Smack was offered for Cooper Kupp, at up to
+                # 76 FAAB. Only a like-for-like upgrade of the one you start.
+                if (target["pos"] in SINGLE_SLOT_POS or drop["pos"] in SINGLE_SLOT_POS) \
+                        and target["pos"] != drop["pos"]:
                     continue
                 if target["pos"] != drop["pos"] and (
                         drop["pos"] in reinforced or target["pos"] in thinned):
@@ -1987,13 +1996,19 @@ def _model_inputs(sport, scoring_settings, base=None):
     return players, college_data, stats, signals_by_pid, projs, weekly
 
 
-def analyze_waivers_api(username, league_id, sport="nfl"):
-    user = sleeper_api.get_user(username)
+def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info=None,
+                        inputs=None):
+    """Waiver board, needs and move plan for one league.
+
+    `user`, `league_info` and `inputs` let the cross-league overview pass in
+    what it has already loaded instead of fetching it once per league.
+    """
+    user = user or sleeper_api.get_user(username)
     if not user:
         return {"error": "User not found"}
     user_id = user["user_id"]
 
-    league_info = sleeper_api.get_league(league_id) or {}
+    league_info = league_info or sleeper_api.get_league(league_id) or {}
     roster_positions = league_info.get("roster_positions") or []
     scoring_settings = league_info.get("scoring_settings") or {}
     league_settings = league_info.get("settings") or {}
@@ -2017,7 +2032,8 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     if waiver_budget:
         budget_left = waiver_budget - (my_roster.get("settings") or {}).get("waiver_budget_used", 0)
 
-    players, college_data, stats, signals_by_pid, projs, weekly = _model_inputs(sport, scoring_settings)
+    players, college_data, stats, signals_by_pid, projs, weekly = (
+        inputs or _model_inputs(sport, scoring_settings))
 
     rostered_ids = {str(pid) for r in rosters for pid in (r.get("players") or [])}
 
@@ -2629,6 +2645,94 @@ def lineup_overview_api(username, sport="nfl"):
             "leagues": out}
 
 
+WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+
+
+def _waiver_schedule(settings):
+    """When claims run in this league, as Sleeper's settings say.
+
+    `waiver_day_of_week` counts from Monday (2 is Sleeper's default
+    Wednesday). With daily waivers on, claims also run every day.
+    """
+    kind = "faab" if settings.get("waiver_type") == 2 else "priority"
+    day = settings.get("waiver_day_of_week")
+    return {
+        "kind": kind,
+        "day": WEEKDAYS[day] if isinstance(day, int) and 0 <= day < 7 else None,
+        "daily": bool(settings.get("daily_waivers")),
+        "clear_days": settings.get("waiver_clear_days"),
+    }
+
+
+def _move_summary(rec):
+    add, drop = rec["add"], rec["drop"]
+
+    def side(p):
+        return {"id": p["id"], "name": p["name"], "pos": p["pos"], "team": p["team"],
+                "per_week": round((p.get("pts") or 0) / projections.SEASON_GAMES["nfl"], 1)
+                if p.get("pts_season") is not None else None,
+                "injury": p.get("injury")}
+
+    return {"kind": rec["kind"], "add": side(add), "drop": side(drop),
+            "reason": rec["reason"], "faab": rec.get("faab"),
+            "lineup_gain": (rec.get("balance") or {}).get("lineup_gain"),
+            "edge_gain": (rec.get("balance") or {}).get("edge_gain"),
+            "edge_unit": (rec.get("balance") or {}).get("edge_unit")}
+
+
+def waiver_overview_api(username, sport="nfl"):
+    """The waiver plan for every league the user is in this season.
+
+    One pass, sharing what does not depend on a league's scoring - the same
+    economy as the lineup check. Leagues with a move that improves the
+    starting lineup come first; depth-only leagues after them.
+    """
+    user = sleeper_api.get_user(username)
+    if not user:
+        return {"error": "User not found"}
+    season = current_season(sport)
+    leagues = sleeper_api.get_leagues(user["user_id"], sport, season) or []
+    base = _model_base(sport)
+    by_scoring = {}
+    out = []
+    for league in leagues:
+        settings = league.get("settings") or {}
+        entry = {"league_id": league.get("league_id"), "name": league.get("name"),
+                 "profile": {"key": league_profile(league)["key"],
+                             "label": league_profile(league)["label"]},
+                 "schedule": _waiver_schedule(settings), "skipped": None,
+                 "moves": [], "lineup_moves": 0}
+        out.append(entry)
+        if league.get("status") != "in_season":
+            entry["skipped"] = "not_in_season"
+            continue
+        scoring = league.get("scoring_settings") or {}
+        key = json.dumps(scoring, sort_keys=True)
+        if key not in by_scoring:
+            by_scoring[key] = _model_inputs(sport, scoring, base)
+        result = analyze_waivers_api(username, league["league_id"], sport, user=user,
+                                     league_info=league, inputs=by_scoring[key])
+        if "error" in result:
+            # A roster that is really gone is not the same as one that did
+            # not load; the page says which.
+            gone = result["error"] in ("Roster not found", "Dein Roster in dieser Liga ist leer.")
+            entry["skipped"] = "no_roster" if gone else "error"
+            entry["error"] = None if gone else result["error"]
+            continue
+        moves = [_move_summary(r) for r in result["smart_recommendations"]]
+        entry.update({
+            "moves": moves,
+            "lineup_moves": sum(1 for m in moves if m["kind"] == "lineup"),
+            "moves_note": result.get("moves_note"),
+            "faab": result["faab"],
+            "needs": [{"pos": n["pos"], "severity": n["severity"], "label": n.get("label")}
+                      for n in result["roster_needs"] if n["severity"] >= 2],
+        })
+    out.sort(key=lambda e: (e["skipped"] is not None, -e["lineup_moves"],
+                            -len(e["moves"]), e["name"] or ""))
+    return {"leagues": out}
+
+
 def update_sleeper_data_api(sport="nfl", college_batch=25):
     """Refreshes the local player/stats snapshot.
 
@@ -2775,6 +2879,14 @@ def build_overview_snapshot(username, sport="nfl"):
         "generated_at": int(time.time()),
         "lineup": {"leagues": lineup_part["leagues"]},
     }
+    # The waiver half fails on its own: a lineup check without it is still
+    # worth storing.
+    try:
+        waiver_part = waiver_overview_api(username, sport)
+        if "error" not in waiver_part:
+            snapshot["waivers"] = waiver_part
+    except Exception as e:  # noqa: BLE001
+        print(f"Waiver overview failed: {e}")
     _write_data(filename, snapshot)
     return {"status": "success",
             "message": f"Übersicht {username}: {len(lineup_part['leagues'])} Ligen "
