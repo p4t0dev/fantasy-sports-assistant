@@ -209,6 +209,13 @@ Rein/Raus werden zuerst im selben Slot gepaart — Kicker gegen Kicker — und e
 danach über Positionen hinweg. Nach Wert allein gepaart las sich ein
 Kicker-Tausch als „starte den 7-Punkte-Kicker statt des 14-Punkte-RB“.
 
+Darunter steht der **Waiver-Plan aller Ligen** (`waiver_overview_api`): pro
+Liga die empfohlenen Moves mit Punkten pro Woche und FAAB-Spanne, Budget,
+Waiver-Tag (`waiver_day_of_week`, ab Montag gezählt; tägliche Waiver
+markiert) und die Strategie des Ligatyps. Ligen mit Startelf-Upgrades
+stehen oben, reine Kadertiefe-Ligen zugeklappt darunter. Eine Liga, deren
+Daten Sleeper nicht geliefert hat, heißt so — nicht „kein Kader“.
+
 Die Übersicht ist ein **Snapshot**, nie eine Live-Berechnung: alle Ligen durch
 das volle Modell dauern für einen Seitenaufruf zu lange, und die Antwort ändert
 sich nur mit neuen Prognosen und Meldungen. `refresh_data` baut sie um 06:00,

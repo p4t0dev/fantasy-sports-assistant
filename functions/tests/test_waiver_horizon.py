@@ -45,5 +45,20 @@ class WaiverHorizonTest(unittest.TestCase):
         self.assertIsNone(api_core.drop_protection(player, 50, 110, sig, levels))
 
 
+class DepthMoveTest(unittest.TestCase):
+
+    def _p(self, pid, pos, dvs, pts=10.0):
+        return {"id": pid, "name": pid, "pos": pos, "elig": {pos}, "dvs": dvs, "pts": pts,
+                "protected": None, "signals": []}
+
+    def test_no_kicker_for_depth_at_another_position(self):
+        roster = [self._p("wr_start", "WR", 300, 200), self._p("wr_bench", "WR", 50, 5),
+                  self._p("k_start", "K", 40, 120)]
+        pool = [self._p("kicker", "K", 400, 130)]
+        levels = {"WR": {"dvs": 100, "pts": 100}, "K": {"dvs": 10, "pts": 100}}
+        moves = api_core._depth_moves(roster, pool, ["WR", "K"], set(), set(), 3, levels)
+        self.assertEqual(moves, [])
+
+
 if __name__ == "__main__":
     unittest.main()

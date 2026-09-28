@@ -8,6 +8,7 @@ import type { LineupIssue, Overview, OverviewLeague, Player } from "@/lib/types"
 import { InjuryBadge, MatchupBadge, PosBadge, startPts } from "@/components/PlayerBadges";
 import { CloseCalls, ForecastDelta, ForecastDetail, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
+import WaiverOverview from "@/components/WaiverOverview";
 import {
   subscribeToSearch,
   getSearchSnapshot,
@@ -281,10 +282,15 @@ function OverviewContent() {
         <div>
           <h1 className="text-3xl font-bold text-white">Wochenübersicht</h1>
           <p className="text-gray-400 mt-1">
-            Aufstellungs-Check über alle Ligen
+            Aufstellung und Waiver über alle Ligen
             {data.week ? ` · Woche ${data.week}` : ""} ·{" "}
             <span className="text-gray-200 font-medium">{data.username}</span>
           </p>
+          {data.waivers && (
+            <a href="#waiver" className="inline-block mt-1 text-sm text-blue-400 hover:text-blue-300">
+              Zu den Waivern ↓
+            </a>
+          )}
           <p className={`text-xs mt-1 ${age.stale ? "text-orange-300" : "text-gray-500"}`}>
             Stand {stamp} ({age.label}) · wird morgens, mittags und abends neu berechnet
             {age.stale && " — der letzte Lauf ist ausgeblieben"}
@@ -362,6 +368,8 @@ function OverviewContent() {
           ))}
         </div>
       )}
+
+      {data.waivers && <WaiverOverview leagues={data.waivers.leagues} linkParams={linkParams} />}
     </div>
   );
 }

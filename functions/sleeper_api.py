@@ -4,14 +4,28 @@ import os
 
 BASE_URL = "https://api.sleeper.app/v1"
 
-def _make_request(url):
+def _make_request(url, attempts=3):
+    """GET a Sleeper endpoint, or None.
+
+    A dropped connection is retried: one lost TLS handshake used to make a
+    whole league read as "no roster" in the overview. An HTTP error (404 for
+    a league that is gone) is an answer, not a glitch, and is not retried.
+    """
+    import time
+    import urllib.error
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    try:
-        with urllib.request.urlopen(req) as response:
-            return json.loads(response.read().decode())
-    except Exception as e:
-        print(f"Error fetching {url}: {e}")
-        return None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as e:
+            print(f"Error fetching {url}: {e}")
+            return None
+        except Exception as e:  # noqa: BLE001 - network: retry, then give up
+            if attempt == attempts - 1:
+                print(f"Error fetching {url}: {e}")
+                return None
+            time.sleep(0.5 * (attempt + 1))
 
 def get_user(username):
     url = f"{BASE_URL}/user/{username}"

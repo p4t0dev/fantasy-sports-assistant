@@ -259,6 +259,42 @@ export type OverviewLeague = {
   gain?: number;
 };
 
+export type WaiverMoveSide = {
+  id: string;
+  name: string;
+  pos: string;
+  team: string;
+  /** Forecast points per week over the horizon; null off-season. */
+  per_week: number | null;
+  injury?: Injury | null;
+};
+
+export type WaiverMove = {
+  kind: "lineup" | "depth";
+  add: WaiverMoveSide;
+  drop: WaiverMoveSide;
+  reason: string;
+  faab: Faab | null;
+  lineup_gain?: number | null;
+  edge_gain?: number | null;
+  edge_unit?: string | null;
+};
+
+export type WaiverLeague = {
+  league_id: string;
+  name: string;
+  profile: { key: string; label: string };
+  schedule: { kind: "faab" | "priority"; day: string | null; daily: boolean; clear_days?: number | null };
+  skipped: "not_in_season" | "no_roster" | "error" | null;
+  /** Why the plan is missing when Sleeper did not answer. */
+  error?: string | null;
+  moves: WaiverMove[];
+  lineup_moves: number;
+  moves_note?: string | null;
+  faab?: { budget: number | null; left: number | null; waiver_type: number | null };
+  needs?: { pos: string; severity: number; label?: string | null }[];
+};
+
 export type Overview = {
   username: string;
   sport: string;
@@ -267,4 +303,6 @@ export type Overview = {
   /** Unix seconds. */
   generated_at: number;
   lineup: { leagues: OverviewLeague[] };
+  /** Missing in snapshots from before the waiver overview existed. */
+  waivers?: { leagues: WaiverLeague[] };
 };
