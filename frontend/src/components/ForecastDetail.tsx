@@ -96,3 +96,64 @@ export function ForecastDetail({ player }: { player: Player }) {
     </details>
   );
 }
+
+/** The number the waiver board ranks by, as a reader should see it.
+ *
+ *  In season `pts` there is the forecast pace over the horizon (per week ×
+ *  17, so it sits on the scale of a season projection). Shown as a season it
+ *  read like a projection nobody made; shown per week it is the same number
+ *  as on the lineup page. Off-season it is the season projection. */
+export function waiverPts(player: Player): { value: string; unit: string } {
+  const h = player.horizon;
+  if (player.pts_season != null && h?.length) {
+    return {
+      value: ((player.pts ?? 0) / 17).toFixed(1),
+      unit: `Ø W${h[0].week}–${h[h.length - 1].week}`,
+    };
+  }
+  return { value: String(player.pts ?? 0), unit: "Proj" };
+}
+
+/** The horizon week by week, with opponents and byes. */
+export function HorizonDetail({ player }: { player: Player }) {
+  const weeks = player.horizon;
+  if (!weeks?.length) return null;
+  const total = weeks.reduce((sum, w) => sum + w.pts, 0);
+  return (
+    <details className="mt-1.5 group/hz">
+      <summary className="cursor-pointer list-none select-none text-[11px] text-gray-500 hover:text-gray-300">
+        <span className="group-open/hz:hidden">▸</span>
+        <span className="hidden group-open/hz:inline">▾</span> Prognose W{weeks[0].week}–
+        {weeks[weeks.length - 1].week}: {total.toFixed(1)} Pkt
+      </summary>
+      <div className="mt-2 rounded-md border border-gray-800 bg-gray-900/60 p-3 text-[11px] text-gray-300 space-y-2">
+        <div className="grid grid-cols-5 gap-1 text-center">
+          {weeks.map((w) => (
+            <div key={w.week} className="rounded bg-gray-800/60 py-1">
+              <div className="text-gray-500">W{w.week}</div>
+              <div className={w.opp ? "text-white font-medium" : "text-red-300"}>
+                {w.opp ? w.pts.toFixed(1) : "Bye"}
+              </div>
+              <div className="text-gray-500 truncate">{w.opp ? `vs ${w.opp}` : ""}</div>
+            </div>
+          ))}
+        </div>
+        {player.pts_season != null && (
+          <div className="text-gray-500">
+            Zum Vergleich Sleepers Saisonprognose: {(player.pts_season / 17).toFixed(1)} pro Woche
+          </div>
+        )}
+        {player.forecast && (
+          <ul className="space-y-0.5 text-gray-400">
+            {player.forecast.explain.map((line, i) => (
+              <li key={i}>{i === 0 ? `W${weeks[0].week}: ` : ""}{line}</li>
+            ))}
+          </ul>
+        )}
+        <Link href="/prognose" className="inline-block text-blue-400 hover:text-blue-300">
+          So funktioniert die Prognose →
+        </Link>
+      </div>
+    </details>
+  );
+}

@@ -1018,7 +1018,7 @@ LEVEL_METRICS = ("dvs", "rvs", "pts")
 
 def replacement_levels(rosters, players, stats, college_data, sigs, req, num_teams,
                        sport="nfl", fallback_pool=True, projs=None,
-                       roster_positions=None):
+                       roster_positions=None, weekly=None):
     """League-relative baseline per position: the value of the last player who
     would still be starting somewhere in this league.
 
@@ -1037,6 +1037,10 @@ def replacement_levels(rosters, players, stats, college_data, sigs, req, num_tea
     assignment cannot speak about - a position with no slot in this league has
     no marginal starter, and a zero there would make every player at it read as
     above replacement.
+
+    With `weekly`, the `pts` bar is measured in forecast pace over the horizon -
+    the currency the waiver board ranks in. A bar in season points under a
+    board in pace would compare two different numbers.
     """
     pool = []
     seen = set()
@@ -1045,11 +1049,16 @@ def replacement_levels(rosters, players, stats, college_data, sigs, req, num_tea
         p_stats = stats.get(str(pid), {})
         sig = sigs.get(str(pid))
         proj = (projs or {}).get(str(pid))
+        pts = None
+        if weekly:
+            pts = _week_fields(pid, player, sig, weekly, proj)["pts_pace"]
+        if pts is None:
+            pts = expected_points(player, p_stats, sig, proj)
         return {
             "elig": lineup.player_positions(player),
             "dvs": calculate_dvs(player, p_stats, college_data, sig, proj),
             "rvs": calculate_rvs(player, p_stats, sig, proj),
-            "pts": expected_points(player, p_stats, sig, proj),
+            "pts": pts,
         }
 
     by_pos = {}
@@ -1116,12 +1125,17 @@ def replacement_points(levels):
     return {pos: lv["pts"] for pos, lv in levels.items()}
 
 
-def roster_needs(my_players, roster_positions, levels):
+# In season the waiver board ranks by forecast pace (per week × 17); every
+# number it prints is divided back to a week, the unit the lineup page uses.
+PACE_UNIT = (float(projections.SEASON_GAMES["nfl"]), "Pkt/Woche")
+
+
+def roster_needs(my_players, roster_positions, levels, unit=None):
     """Needs come from the lineup and from real positional depth, not from a
     headcount of primary positions."""
     return lineup.positional_needs(
         my_players, roster_positions, replacement_points(levels), _start_value,
-        starter_requirements(roster_positions))
+        starter_requirements(roster_positions), unit=unit or lineup.SEASON_UNIT)
 
 
 # Headcount vs. what the league actually requires - not startable quality.
@@ -1251,6 +1265,12 @@ def drop_protection(player, dvs, pts, sig, levels):
         return "Liefert aktuell noch Startwert — halten"
     if sig["injury"]["term"] == "long" and dvs >= threshold * 0.6:
         return "Nur verletzt, nicht wertlos — stashen statt droppen"
+    # Out for a week is a zero in one week of the horizon, not a verdict on
+    # the player. Without this, the zero plus a thin form sample offered
+    # Nick Bosa - Out with a calf, two games played - as depth to cut.
+    if sig["injury"]["term"] == "short" and sig["injury"]["severity"] >= 2 \
+            and dvs >= threshold * 0.6:
+        return "Fällt nur kurz aus — halten"
     if sig["opportunity"]["score"] >= 2:
         return "Rückt in der Depth Chart auf — halten"
     return None
@@ -1352,7 +1372,7 @@ def _lineup_value(players, roster_positions):
 
 
 def plan_moves(my_players, available, roster_positions, levels, needs=None,
-               max_moves=5, target_pool=40):
+               max_moves=5, target_pool=40, unit=None):
     """Plans a sequence of add/drop moves by simulating the actual lineup.
 
     A move is only worth making if the resulting starting lineup is better than
@@ -1436,7 +1456,9 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
         used_drops.add(drop["id"])
         reserved = depth_reserves(roster, roster_positions, levels, needs)
 
-        why = [f"Verbessert deine Startaufstellung um {round(delta, 1)} Punkte "
+        divisor, label = unit or (1.0, "Punkte")
+        shown = round(delta / divisor, 1)
+        why = [f"Verbessert deine Startaufstellung um {shown} {label} "
                f"({target['pos']} rein, {drop['pos']} raus)."]
         why.extend(target.get("signals", [])[:2])
 
@@ -1450,7 +1472,7 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
             "balance": {
                 "pos_in": target["pos"],
                 "pos_out": drop["pos"],
-                "lineup_gain": round(delta, 1),
+                "lineup_gain": shown,
                 "starts": target["id"] in {p["id"] for _, p in after if p is not None},
                 "empty_slots": [s for s, p in after if p is None],
             },
@@ -1674,16 +1696,81 @@ def _week_availability(sig):
     return injury.get("redraft_mult", 1.0)
 
 
-def _plays_this_week(player, opp, sig):
-    """Whether a missing projection row means "not projected yet" or "does not play".
+# Snap share in his team's latest game above which a player Sleeper does not
+# project is read as overlooked rather than as not expected to play.
+STAND_IN_SNAPS = 0.5
 
-    Sleeper ships rows without stats for players it has not projected yet -
-    on a Sunday, most of a Monday night team's defense. Read as "does not
-    play", a healthy starter scored 0.0 and was benched for it.
+
+def _overlooked(player, use, injury):
+    """Whether a player without a Sleeper projection plays anyway.
+
+    Sleeper leaves some starters unprojected - Jalyx Hunt, at 79 % of the
+    Eagles' defensive snaps, has no row in any week. Most unprojected players
+    are what the missing row says: practice squad, depth, released. Only
+    what he did in his team's latest game tells them apart, so only a player
+    who was on the field for most of it gets a forecast from form and
+    quality; everyone else scores what Sleeper expects, nothing.
     """
-    if not opp or player.get("status") != "Active":
+    if player.get("status") != "Active" or (injury.get("severity") or 0) >= 2:
         return False
-    return (((sig or {}).get("injury") or {}).get("severity") or 0) < 2
+    return bool(use and use.get("current") and (use.get("snap_pct") or 0) >= STAND_IN_SNAPS)
+
+
+def _forecast_week(pid, player, sig, weekly, proj, i, locked=False):
+    """The forecast for one week of the horizon, or None when his team has no game.
+
+    Week 0 is the week lineups are being set for and gets everything: weather
+    and the Vegas line (both only exist for it), usage, a short-term injury
+    designation, the lock. A later week gets the same base and matchup against
+    its own opponent; of the designations only a long-term one - IR, PUP,
+    suspension - reaches it. "Questionable" on a Friday says nothing about
+    the game three weeks out.
+    """
+    weeks = weekly["weeks"]
+    team = player.get("team")
+    opp = weekly["opp"][weeks[i]].get(team) if team else None
+    if not opp:
+        return None
+    row = weekly["pts"].get(pid)
+    injury = (sig or {}).get("injury") or {}
+    if i and injury.get("term") != "long":
+        injury = {}
+    now = i == 0
+    use = (weekly.get("usage") or {}).get(pid)
+
+    S = row[i] if row and row[i] else None
+    unprojected = S is None
+    if unprojected and _overlooked(player, use, injury):
+        S = None  # the base rests on form and quality
+    elif unprojected:
+        # Sleeper projects every player it expects to see the field. No
+        # projection, on a team it has projected in full, means no snaps -
+        # and a game or two of form is not a reason to overrule that.
+        S = 0.0
+
+    pos = player.get("position")
+    group = forecast.group_of(pos)
+    allowed, league_avg, opp_games = weekly.get("allowed") or ({}, {}, {})
+    context = (weekly.get("context") or {}) if now else {}
+    prev = (weekly.get("prev") or {}).get(pid) or (None, 0)
+    fc = forecast.forecast(
+        pos, S,
+        history=list((use or {}).get("pts_by_week", {}).values()),
+        Q=forecast.quality(proj, *prev),
+        usage_adj=None if locked or not use or not now else use["adj"],
+        allowed=allowed.get((opp, group)), league_avg=league_avg.get(group),
+        opp_games=opp_games.get(opp, 0),
+        vegas_ratio=gameday.vegas_ratio(context.get("odds"), team),
+        wx=(context.get("weather") or {}).get(team),
+        injury=injury, locked=locked and now)
+    if S is None:
+        fc["explain"].insert(0, f"Keine Sleeper-Prognose, aber {round(use['snap_pct'] * 100)} % "
+                                "der Snaps im letzten Spiel - Basis aus Form und Qualität")
+    elif unprojected:
+        fc = forecast.forecast(pos, 0.0, [], None, injury=injury, locked=locked and now)
+        fc["explain"].insert(0, "Keine Sleeper-Prognose: kein Einsatz erwartet")
+    fc["opp"] = opp
+    return fc
 
 
 def _week_fields(pid, player, sig, weekly, proj=None):
@@ -1693,53 +1780,45 @@ def _week_fields(pid, player, sig, weekly, proj=None):
     form and quality blended, corrected for role, matchup and weather, times
     availability. `pts_week_base` keeps Sleeper's number as it came, so the
     two can always be compared.
+
+    `horizon` runs the same forecast over this week and the next ones
+    (`WEEK_HORIZON`), each against its own opponent, a bye as 0. `pts_pace`
+    is that horizon as a season: per week times a season's games, so it
+    lives on the same scale as the season projection it replaces for waivers.
     """
     if not weekly:
         return {"pts_week": None, "pts_week_base": None, "pts_horizon": None,
-                "opp": None, "bye": False, "bye_week": None, "locked": False,
-                "usage": None, "forecast": None}
+                "pts_pace": None, "horizon": None, "opp": None, "bye": False,
+                "bye_week": None, "locked": False, "usage": None, "forecast": None}
 
     pid = str(pid)
     weeks = weekly["weeks"]
     row = weekly["pts"].get(pid)
-    injury = (sig or {}).get("injury") or {}
     team = player.get("team")
     opp = weekly["opp"][weeks[0]].get(team) if team else None
     byes = [w for w in weeks if team and team not in weekly["opp"][w]]
     date = weekly["date"].get(team) if team else None
     locked = bool(date) and date < weekly["today"]
     use = (weekly.get("usage") or {}).get(pid)
-    later = injury.get("redraft_mult", 1.0) if injury.get("term") == "long" else 1.0
 
-    if not opp:
-        fc = None  # bye, or no team: there is no game to forecast
-        pts_week = 0.0
-    else:
-        S = row[0] if row and row[0] else (None if _plays_this_week(player, opp, sig) else 0.0)
-        pos = player.get("position")
-        group = forecast.group_of(pos)
-        allowed, league_avg, opp_games = weekly.get("allowed") or ({}, {}, {})
-        context = weekly.get("context") or {}
-        prev = (weekly.get("prev") or {}).get(pid) or (None, 0)
-        fc = forecast.forecast(
-            pos, S,
-            history=list((use or {}).get("pts_by_week", {}).values()),
-            Q=forecast.quality(proj, *prev),
-            usage_adj=None if locked or not use else use["adj"],
-            allowed=allowed.get((opp, group)), league_avg=league_avg.get(group),
-            opp_games=opp_games.get(opp, 0),
-            vegas_ratio=gameday.vegas_ratio(context.get("odds"), team),
-            wx=(context.get("weather") or {}).get(team),
-            injury=injury, locked=locked)
-        if S is None:
-            fc["explain"].insert(0, "Keine Wochenprognose von Sleeper - Basis aus Form und Qualität")
-        pts_week = fc["P"]
+    horizon = []
+    fc = None
+    for i, week in enumerate(weeks):
+        week_fc = _forecast_week(pid, player, sig, weekly, proj, i, locked)
+        if i == 0:
+            fc = week_fc
+        horizon.append({"week": week, "opp": week_fc["opp"] if week_fc else None,
+                        "pts": week_fc["P"] if week_fc else 0.0})
+    pts_week = fc["P"] if fc else 0.0
+    total = sum(h["pts"] for h in horizon)
 
     sleeper = (row[0] if row else 0.0) * (1.0 if locked else _week_availability(sig))
     return {
         "pts_week": pts_week,
         "pts_week_base": round(sleeper, 1),
-        "pts_horizon": round(pts_week + sum((row or [0.0] * len(weeks))[1:]) * later, 1),
+        "pts_horizon": round(total, 1),
+        "pts_pace": round(total / len(weeks) * projections.SEASON_GAMES.get("nfl", 17), 1),
+        "horizon": horizon,
         "opp": opp,
         "bye": bool(byes) and byes[0] == weeks[0],
         "bye_week": byes[0] if byes else None,
@@ -1757,8 +1836,16 @@ def _week_fields(pid, player, sig, weekly, proj=None):
 
 
 def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None,
-                  weekly=None):
-    """One enriched player record, keyed by the positions the league's slots use."""
+                  weekly=None, horizon_pts=False):
+    """One enriched player record, keyed by the positions the league's slots use.
+
+    With `horizon_pts` - the waiver board - `pts` is the forecast pace over the
+    horizon instead of the season projection, and the season projection moves
+    to `pts_season`. A pickup is judged on the weeks it is picked up for, by
+    the same forecast that sets the lineup: the season projection is a number
+    from August that knows neither the last games, nor the byes ahead, nor
+    who he plays next.
+    """
     p_stats = stats.get(str(pid), {})
     proj = (projs or {}).get(str(pid))
     rvs = calculate_rvs(player, p_stats, sig, proj)
@@ -1788,6 +1875,9 @@ def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, pro
         "news_days": sig["recency"]["news_days"] if sig else None,
     }
     entry.update(_week_fields(pid, player, sig, weekly, proj))
+    if horizon_pts and entry["pts_pace"] is not None:
+        entry["pts_season"] = pts
+        entry["pts"] = entry["pts_pace"]
     if extra:
         entry.update(extra)
     return entry
@@ -1848,7 +1938,7 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
     req = starter_requirements(roster_positions)
     levels = replacement_levels(rosters, players, stats, college_data,
                                 signals_by_pid, req, num_teams, sport, projs=projs,
-                                roster_positions=roster_positions)
+                                roster_positions=roster_positions, weekly=weekly)
 
     # ---- My roster -------------------------------------------------------
     my_players_stats = []
@@ -1858,13 +1948,14 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
             continue
         sig = signals_by_pid.get(str(pid))
         entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs,
-                              weekly=weekly)
+                              weekly=weekly, horizon_pts=True)
         entry["protected"] = drop_protection(p, entry["dvs"], entry["pts"], sig, levels) if sig else None
         entry["is_liability"] = (entry["pts"] < levels.get(entry["pos"], {}).get("pts", 0)
                                  and not entry["protected"])
         my_players_stats.append(entry)
 
-    needs = roster_needs(my_players_stats, roster_positions, levels)
+    needs = roster_needs(my_players_stats, roster_positions, levels,
+                         unit=PACE_UNIT if weekly else None)
     need_by_pos = {n["pos"]: n for n in needs}
 
     # ---- Available players ----------------------------------------------
@@ -1894,7 +1985,7 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
             continue
 
         entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs,
-                              weekly=weekly)
+                              weekly=weekly, horizon_pts=True)
         pos = entry["pos"]
         severity = need_by_pos.get(pos, {}).get("severity", 0)
         replacement_pts = levels.get(pos, {}).get("pts", 0)
@@ -1916,7 +2007,8 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
         seen[p["pos"]] = seen.get(p["pos"], 0) + 1
         board.append(p)
 
-    recommendations = plan_moves(my_players_stats, available, roster_positions, levels, needs)
+    recommendations = plan_moves(my_players_stats, available, roster_positions, levels, needs,
+                                 unit=PACE_UNIT if weekly else None)
 
     state = sleeper_api.get_state(sport) or {}
     activity = signals.league_activity(league_id, state.get("week") or 1, players)
@@ -1947,6 +2039,9 @@ def analyze_waivers_api(username, league_id, sport="nfl"):
             "empty": lineup_now["empty"],
         },
         "positions": sorted(league_positions),
+        # What `pts` means on this board: forecast pace over these weeks, or
+        # the season projection off-season.
+        "horizon": {"weeks": weekly["weeks"]} if weekly else None,
         "faab": {"budget": waiver_budget, "left": budget_left,
                  "waiver_type": league_settings.get("waiver_type")},
         "league_activity": activity,
@@ -2413,6 +2508,14 @@ def update_sleeper_data_api(sport="nfl", college_batch=25):
         schedule = sleeper_api.get_schedule(sport, str(current_year))
         if schedule:
             context = gameday.fetch_context(schedule, week)
+            # A failed fetch returns roofs only. Keep the last good forecast
+            # for the week rather than overwrite it with nothing.
+            stored = load_json(gameday_file(sport, str(current_year), week)) or {}
+            outdoor = lambda wx: sum(1 for v in (wx or {}).values() if not v.get("dome"))
+            if outdoor(context["weather"]) < outdoor(stored.get("weather")):
+                context["weather"] = stored["weather"]
+            if not context["odds"] and stored.get("odds"):
+                context["odds"] = stored["odds"]
             _write_data(gameday_file(sport, str(current_year), week), context)
             bits = [f"Wetter {len(context['weather'])} Teams"]
             bits.append(f"Vegas {len(context['odds'])} Teams" if context["odds"]

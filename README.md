@@ -229,6 +229,15 @@ Score = (max(0, pts − Replacement) + 0.35·pts + 0.25·DVS)
         + Marktdruck-Bonus + Chancen-Bonus + Bedarfs-Bonus
 ```
 
+`pts` ist während der Saison **nicht** die Saisonprognose, sondern das Tempo
+der Wochenprognose über diese und die nächsten vier Wochen (Summe der `P`,
+jede Woche gegen ihren Gegner, Bye = 0, × 17 / 5) — dieselbe Prognose wie in
+der Aufstellung. Ersatzniveau, Bedarf, Moves und Drop-Schutz rechnen in
+derselben Währung; die Seite zeigt sie pro Woche. Eine Saisonprognose aus dem
+August kennt weder die letzten Spiele noch die Byes der nächsten Wochen noch
+die Gegner, und eine einwöchige Verletzung drückte sie um 90 % für die ganze
+Saison. Außerhalb der Saison bleibt es bei der Saisonprognose.
+
 Verankert an projizierten Punkten **über Replacement Level** — die einzige Zahl,
 die sagt, ob ein Zugang überhaupt etwas ausrichten kann. Die Marktterme sind
 Modifikatoren darauf, kein Ersatz dafür: ein pauschaler `+160` für Trending

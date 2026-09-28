@@ -7,6 +7,7 @@ PR zuordnen. Ein Nachbessern ohne neuen PR erhöht nur den Patch.
 
 | Version | PR | Inhalt |
 |---|---|---|
+| 0.9.0 | [#9](https://github.com/p4t0dev/fantasy-sports-assistant/pull/9) | Waiver auf die Wochenprognose: Bewertung, Ersatzniveau, Bedarf und Moves rechnen mit der Prognose über W+0…W+4 (Bye = 0) statt mit der Saisonprognose, angezeigt pro Woche; Spieler ohne Sleeper-Prognose nur noch mit echten Snaps prognostiziert; Drop-Schutz für kurzfristig Verletzte |
 | 0.8.0 | [#8](https://github.com/p4t0dev/fantasy-sports-assistant/pull/8) | Wochenprognose aus Sleeper, Form und Qualität, per Backtest 2025 gewichtet; Matchup, Wetter (Open-Meteo), Vegas (The Odds API); Erklärung pro Spieler und Seite `/prognose`; Box-Scores aller Positionen; DEF-Saisonwerte ×17-Fehler behoben; Versionsanzeige |
 | 0.7.0 | [#7](https://github.com/p4t0dev/fantasy-sports-assistant/pull/7) | Wochenprojektionen, Aufstellungs-Check über alle Ligen (`/overview`), Historie- und K/DEF-Fixes |
 | 0.6.0 | [#6](https://github.com/p4t0dev/fantasy-sports-assistant/pull/6) | Liga-relative Replacement Levels, Waiver/Lineup/Draft-Ansichten überarbeitet |

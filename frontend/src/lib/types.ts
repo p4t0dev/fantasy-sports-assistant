@@ -48,8 +48,14 @@ export type Player = {
   forecast?: Forecast | null;
   /** What his team has been doing with him: snaps, rank, points per week. */
   usage?: Usage | null;
-  /** Points over this week and the following ones (see `WEEK_HORIZON`). */
+  /** Forecast points over this week and the following ones (see `WEEK_HORIZON`). */
   pts_horizon?: number | null;
+  /** The horizon as a season: per week × 17. On the waiver board this is `pts`. */
+  pts_pace?: number | null;
+  /** The season projection, where `pts` holds the pace instead (waivers). */
+  pts_season?: number | null;
+  /** The forecast week by week; opp null means bye. */
+  horizon?: { week: number; opp: string | null; pts: number }[] | null;
   /** This week's opponent; null on bye or off-season. */
   opp?: string | null;
   bye?: boolean;
@@ -165,6 +171,9 @@ export type Need = {
   covered?: boolean;
   /** The bar `startable` was counted against, in the league's own points. */
   replacement?: number;
+  /** What `replacement` and `top[].value` are in: "Proj-Punkte" (season) or
+   *  "Pkt/Woche" (in-season forecast). */
+  unit?: string;
   /** The best eligible players at this position, so the count can be checked. */
   top?: { name: string; value: number; startable: boolean }[];
   reason: string;
