@@ -7,6 +7,7 @@ PR zuordnen. Ein Nachbessern ohne neuen PR erhöht nur den Patch.
 
 | Version | PR | Inhalt |
 |---|---|---|
+| 0.13.0 | [#13](https://github.com/p4t0dev/fantasy-sports-assistant/pull/13) | Dashboard-Box zeigt den Waiver-Stand und verlinkt direkt zu den Waivern; Wochenübersicht zeigt den Waiver-Bereich immer (mit Hinweis, solange der Snapshot älter ist); Sprung zu `#waiver` nach dem Laden |
 | 0.12.0 | [#12](https://github.com/p4t0dev/fantasy-sports-assistant/pull/12) | Waiver-Seite: alle Abschnitte zuklappbar (mit Kurzfassung im zugeklappten Zustand, pro Browser gemerkt), Sprungleiste mit „Alle zu/auf“; Startaufstellung in Pkt/Woche statt Saison-Hochrechnung |
 | 0.11.0 | [#11](https://github.com/p4t0dev/fantasy-sports-assistant/pull/11) | Waiver-Übersicht über alle Ligen in der Wochenübersicht (Moves, FAAB, Waiver-Tag, Strategie) und in `--overview`; keine Kicker/DEF mehr als Kadertiefe für andere Positionen; Sleeper-Aufrufe wiederholen Netzwerkfehler |
 | 0.10.0 | [#10](https://github.com/p4t0dev/fantasy-sports-assistant/pull/10) | Form aus der Nutzung (xFP, per Backtest: IDP 63.6 %, TE 60.6 %, QB); Floor/Ceiling bei knappen Entscheidungen je nach Matchup; Waiver-Strategie je Ligatyp (Dynasty/Keeper/Redraft/Chopped); Positionen nach den Slots der Liga; Deploy per GitHub Actions; Sleeper-State-Cache (Übersicht 7 s statt 14 s) |

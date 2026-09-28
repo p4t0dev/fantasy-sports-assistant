@@ -231,6 +231,13 @@ function OverviewContent() {
     };
   }, [username, sport]);
 
+  // "#waiver" from the dashboard: the section only exists once the snapshot
+  // has loaded, long after the browser tried to scroll to it.
+  useEffect(() => {
+    if (!data || typeof window === "undefined" || !window.location.hash) return;
+    document.getElementById(window.location.hash.slice(1))?.scrollIntoView();
+  }, [data]);
+
   if (!username) {
     return (
       <div className="glass-panel p-8 text-center">
@@ -286,11 +293,9 @@ function OverviewContent() {
             {data.week ? ` · Woche ${data.week}` : ""} ·{" "}
             <span className="text-gray-200 font-medium">{data.username}</span>
           </p>
-          {data.waivers && (
-            <a href="#waiver" className="inline-block mt-1 text-sm text-blue-400 hover:text-blue-300">
-              Zu den Waivern ↓
-            </a>
-          )}
+          <a href="#waiver" className="inline-block mt-1 text-sm text-blue-400 hover:text-blue-300">
+            Zu den Waivern ↓
+          </a>
           <p className={`text-xs mt-1 ${age.stale ? "text-orange-300" : "text-gray-500"}`}>
             Stand {stamp} ({age.label}) · wird morgens, mittags und abends neu berechnet
             {age.stale && " — der letzte Lauf ist ausgeblieben"}
@@ -369,7 +374,17 @@ function OverviewContent() {
         </div>
       )}
 
-      {data.waivers && <WaiverOverview leagues={data.waivers.leagues} linkParams={linkParams} />}
+      {data.waivers ? (
+        <WaiverOverview leagues={data.waivers.leagues} linkParams={linkParams} />
+      ) : (
+        <section id="waiver" className="glass-panel p-5 space-y-2 scroll-mt-20">
+          <h2 className="text-2xl font-bold text-white">Waiver</h2>
+          <p className="text-sm text-gray-400">
+            Dieser Stand ist älter als der Waiver-Plan. Er wird beim nächsten Datenlauf (06:00,
+            12:00, 18:00) mit berechnet — oder sofort über „Daten aktualisieren“ oben rechts.
+          </p>
+        </section>
+      )}
     </div>
   );
 }

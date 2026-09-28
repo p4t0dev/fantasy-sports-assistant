@@ -87,6 +87,16 @@ export default function Dashboard() {
     (overview?.lineup.leagues ?? []).map((l) => [l.league_id, l.severity])
   );
   const overviewLeagues = (overview?.lineup.leagues ?? []).filter((l) => !l.skipped);
+  // The waiver half of the snapshot. Snapshots from before it existed have
+  // none; say when it will be there instead of saying nothing.
+  const waiverLeagues = (overview?.waivers?.leagues ?? []).filter((l) => !l.skipped);
+  const upgradeMoves = waiverLeagues.reduce((n, l) => n + l.lineup_moves, 0);
+  const upgradeLeagues = waiverLeagues.filter((l) => l.lineup_moves > 0).length;
+  const waiverSummary = !overview?.waivers
+    ? "Waiver-Plan kommt mit dem nächsten Datenlauf"
+    : upgradeMoves
+    ? `Waiver: ${upgradeMoves} Startelf-Upgrade${upgradeMoves === 1 ? "" : "s"} in ${upgradeLeagues} Liga${upgradeLeagues === 1 ? "" : "en"}`
+    : `Waiver: keine Startelf-Upgrades · ${waiverLeagues.filter((l) => l.moves.length).length} Ligen mit Kadertiefe-Moves`;
   const urgentCount = overviewLeagues.filter((l) => l.severity >= 2).length;
   const hintCount = overviewLeagues.filter((l) => l.severity === 1).length;
 
@@ -231,14 +241,13 @@ export default function Dashboard() {
       </div>
 
       {overview && (
-        <Link
-          href={`/overview?${linkParams({})}`}
-          className={`glass-panel max-w-xl mx-auto p-4 flex items-center gap-4 border-l-4 transition-colors hover:border-blue-500/50 ${
+        <div
+          className={`glass-panel max-w-xl mx-auto p-4 flex items-center gap-4 border-l-4 ${
             urgentCount ? "border-l-red-500 bg-red-900/10" : "border-l-green-500 bg-green-900/10"
           }`}
         >
           <div className="text-2xl">{urgentCount ? "⚠" : "✓"}</div>
-          <div className="flex-1 text-sm">
+          <div className="flex-1 text-sm space-y-0.5">
             <div className="text-white font-bold">
               Wochenübersicht{overview.week ? ` · Woche ${overview.week}` : ""}
             </div>
@@ -248,9 +257,22 @@ export default function Dashboard() {
                 : "Alle Aufstellungen in Ordnung"}
               {hintCount > 0 && ` · ${hintCount} mit Hinweisen`}
             </div>
+            <div className="text-gray-400">
+              {waiverSummary}
+            </div>
           </div>
-          <span className="text-blue-400 text-sm font-medium">Öffnen →</span>
-        </Link>
+          <div className="flex flex-col items-end gap-1 text-sm font-medium shrink-0">
+            <Link href={`/overview?${linkParams({})}`} className="text-blue-400 hover:text-blue-300">
+              Aufstellung →
+            </Link>
+            <Link
+              href={`/overview?${linkParams({})}#waiver`}
+              className="text-blue-400 hover:text-blue-300"
+            >
+              Waiver →
+            </Link>
+          </div>
+        </div>
       )}
 
       {!loading && leagues.length === 0 && drafts.length === 0 && (
