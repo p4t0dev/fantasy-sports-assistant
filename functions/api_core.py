@@ -358,7 +358,21 @@ def usage_signals(sport, scoring_settings, players_db):
             # Doubtful counts: most of them sit, and the stand-in keeps the job.
             return signals.injury_signal(player, now_ms)["severity"] >= 2
 
-        return usage.build_usage(data["weeks"], players_db, score, is_out)
+        # xFP in this league's scoring, fitted on this season's played weeks.
+        rows = []
+        for week_rows in data["weeks"].values():
+            for pid, row in week_rows.items():
+                pos = (players_db.get(pid) or {}).get("position")
+                stats = row.get("stats") or {}
+                rows.append((forecast.group_of(pos), stats,
+                             calculate_custom_score(stats, pos, scoring_settings, sport)))
+        model = forecast.fit_xfp(rows)
+
+        def expected(pid, stats):
+            pos = (players_db.get(pid) or {}).get("position")
+            return forecast.xfp(stats, forecast.group_of(pos), model)
+
+        return usage.build_usage(data["weeks"], players_db, score, is_out, expected)
     except Exception as e:  # noqa: BLE001 - a missing signal, not a failed request
         print(f"Usage signals failed: {e}")
         return {}
@@ -1819,6 +1833,7 @@ def _forecast_week(pid, player, sig, weekly, proj, i, locked=False):
     fc = forecast.forecast(
         pos, S,
         history=list((use or {}).get("pts_by_week", {}).values()),
+        xfp_history=list((use or {}).get("xfp_by_week", {}).values()),
         Q=forecast.quality(proj, *prev),
         usage_adj=None if locked or not use or not now else use["adj"],
         allowed=allowed.get((opp, group)), league_avg=league_avg.get(group),
@@ -1895,7 +1910,8 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None):
         "locked": locked,
         "usage": ({"label": use["label"], "adj": use["adj"], "rank": use["rank"],
                    "snap_pct": use["snap_pct"], "avg_pts": use["avg_pts"],
-                   "pts_by_week": {str(w): p for w, p in use["pts_by_week"].items()}}
+                   "pts_by_week": {str(w): p for w, p in use["pts_by_week"].items()},
+                   "xfp_by_week": {str(w): x for w, x in (use.get("xfp_by_week") or {}).items()}}
                   if use else None),
         "forecast": ({k: fc[k] for k in ("P", "B", "K", "A", "S", "F", "n", "Q",
                                          "weights", "R", "M", "W", "explain")}
@@ -2273,15 +2289,88 @@ ISSUE_BENCH_GAIN_URGENT = 5.0
 FORECAST_NOTE_GAP = 1.0
 
 
-def close_calls(changes):
-    """Recommended swaps whose two forecasts are a coin flip apart."""
+# Ahead or behind by this much in your own matchup, a close call is decided by
+# risk instead of by the tenth of a point between two forecasts.
+FAVORITE_MARGIN = 10.0
+
+
+def _spread_of(player):
+    weeks = list(((player.get("usage") or {}).get("pts_by_week") or {}).values())
+    return forecast.spread(player.get("real_pos") or player.get("pos"), weeks)
+
+
+def close_calls(changes, stance=None):
+    """Recommended swaps whose two forecasts are a coin flip apart - and which
+    of the two to take given where you stand in your matchup.
+
+    A favourite needs a floor: the likely win is lost by a bad week, not won
+    by a great one, so the steadier player is the one to start. An underdog
+    needs the opposite, a ceiling. In between it stays a coin flip. The
+    optimal lineup itself is never changed by this - it is advice on the one
+    decision the forecast cannot make.
+    """
     out = []
     for change in changes:
         a, b = change.get("in"), change.get("out")
-        if a and b and abs((a.get("pts_week") or 0) - (b.get("pts_week") or 0)) < forecast.CLOSE_CALL:
-            out.append({"in": a["name"], "out": b["name"],
-                        "gap": round(a["pts_week"] - b["pts_week"], 1)})
+        if not (a and b) or abs((a.get("pts_week") or 0) - (b.get("pts_week") or 0)) >= forecast.CLOSE_CALL:
+            continue
+        sa, sb = _spread_of(a), _spread_of(b)
+        call = {"in": a["name"], "out": b["name"],
+                "gap": round(a["pts_week"] - b["pts_week"], 1),
+                "spread_in": sa, "spread_out": sb, "pick": None, "advice": None}
+        kind = (stance or {}).get("kind")
+        if kind in ("favorite", "chopped") and abs(sa - sb) >= 0.5:
+            steady = a if sa < sb else b
+            call["pick"] = steady["name"]
+            reason = ("Chopped: nicht Letzter werden" if kind == "chopped"
+                      else f"Favorit ({stance['margin']:+.1f})")
+            call["advice"] = (f"{reason} - nimm den sichereren Spieler: {steady['name']} "
+                              f"(±{min(sa, sb)} statt ±{max(sa, sb)})")
+        elif kind == "underdog" and abs(sa - sb) >= 0.5:
+            wild = a if sa > sb else b
+            call["pick"] = wild["name"]
+            call["advice"] = (f"Außenseiter ({stance['margin']:+.1f}) - du brauchst Potenzial: "
+                              f"{wild['name']} (±{max(sa, sb)} statt ±{min(sa, sb)})")
+        out.append(call)
     return out
+
+
+def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_total, week):
+    """Where you stand this week: your best lineup against your opponent's.
+
+    Both through the same forecast. The opponent is credited with his best
+    lineup, not the one he has set - a manager who has not set his lineup on
+    Friday usually has by Sunday. A chopped league has no opponent: the only
+    thing that matters is not being last, so it always plays for the floor.
+    """
+    if ((league or {}).get("settings") or {}).get("type") == 3:
+        return {"kind": "chopped", "margin": None, "opponent": None,
+                "my_total": my_total, "opp_total": None}
+    matchups = sleeper_api.get_matchups(league["league_id"], week) or []
+    mine = next((m for m in matchups if m.get("roster_id") == my_roster.get("roster_id")), None)
+    if not mine or mine.get("matchup_id") is None:
+        return None
+    opp_row = next((m for m in matchups if m.get("matchup_id") == mine["matchup_id"]
+                    and m.get("roster_id") != mine.get("roster_id")), None)
+    opp_roster = next((r for r in rosters if opp_row and r.get("roster_id") == opp_row["roster_id"]), None)
+    if not opp_roster:
+        return None
+    players, college_data, stats, signals_by_pid, projs, weekly = inputs
+    squad = []
+    for pid in opp_roster.get("players") or []:
+        p = players.get(str(pid))
+        if p:
+            squad.append(_player_entry(pid, p, stats, college_data, signals_by_pid.get(str(pid)),
+                                       None, projs=projs, weekly=weekly))
+    opp_total = best_lineup_now(squad, roster_positions,
+                                current_lineup(opp_roster, roster_positions, squad))["total"]
+    users = {u["user_id"]: u.get("display_name") or u.get("username")
+             for u in sleeper_api.get_users_in_league(league["league_id"]) or []}
+    margin = round(my_total - opp_total, 1)
+    kind = ("favorite" if margin >= FAVORITE_MARGIN
+            else "underdog" if margin <= -FAVORITE_MARGIN else "even")
+    return {"kind": kind, "margin": margin, "opponent": users.get(opp_roster.get("owner_id")),
+            "my_total": my_total, "opp_total": round(opp_total, 1)}
 
 
 def lineup_issues(current, gain):
@@ -2316,7 +2405,7 @@ def lineup_issues(current, gain):
     return issues
 
 
-def _lineup_analysis(my_roster, roster_positions, inputs):
+def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=None):
     """Current lineup, best lineup still possible, and the gap between them.
 
     Shared by the optimizer page and the cross-league overview, so both give
@@ -2378,6 +2467,13 @@ def _lineup_analysis(my_roster, roster_positions, inputs):
         key=lambda n: (not n["starting"], -abs(n["pts_week"] - n["pts_week_base"])))
 
     changes = lineup_changes(current, report["slots"], _week_value)
+    stance = None
+    if league and rosters and weekly:
+        try:
+            stance = matchup_stance(league, my_roster, rosters, roster_positions, inputs,
+                                    report["total"], weekly["week"])
+        except Exception as e:  # noqa: BLE001 - advice, never a failed request
+            print(f"Matchup stance failed: {e}")
     current_total = round(
         sum(_week_value(s["player"]) for s in current if s["player"]), 1)
     gain = round(report["total"] - current_total, 1)
@@ -2397,7 +2493,8 @@ def _lineup_analysis(my_roster, roster_positions, inputs):
         "empty": report["empty"],
         "warnings": warnings,
         "forecast_notes": forecast_notes,
-        "close_calls": close_calls(changes),
+        "matchup": stance,
+        "close_calls": close_calls(changes, stance),
         "issues": lineup_issues(current, gain),
         "positions": sorted(lineup.positions_in_use(roster_positions)),
     }
@@ -2427,7 +2524,8 @@ def optimize_lineup_api(username, league_id, sport="nfl"):
         return {"error": "Dein Roster in dieser Liga ist leer."}
 
     result = _lineup_analysis(my_roster, roster_positions,
-                              _model_inputs(sport, scoring_settings))
+                              _model_inputs(sport, scoring_settings),
+                              league=league_info, rosters=rosters)
     result["league"] = {"name": league_info.get("name"), "teams": num_teams}
     return result
 
@@ -2511,13 +2609,14 @@ def lineup_overview_api(username, sport="nfl"):
         if key not in by_scoring:
             by_scoring[key] = _model_inputs(sport, scoring, base)
         analysis = _lineup_analysis(my_roster, league.get("roster_positions") or [],
-                                    by_scoring[key])
+                                    by_scoring[key], league=league, rosters=rosters)
         week = week or analysis["week"]
         entry.update({
             "issues": analysis["issues"],
             "changes": analysis["changes"],
             "forecast_notes": analysis["forecast_notes"],
             "close_calls": analysis["close_calls"],
+            "matchup": analysis["matchup"],
             "current_total": analysis["current_total"],
             "total": analysis["total"],
             "gain": analysis["gain"],

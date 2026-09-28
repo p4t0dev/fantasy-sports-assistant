@@ -80,6 +80,20 @@ das Modell Sleeper dort nicht, gilt für die Position Sleeper allein — Stand
 python3 tools/backtest_forecast.py --league_id <ID> --fit --out functions/data/forecast_params.json
 ```
 
+**Form aus der Nutzung (xFP)**: Zwei Spiele Punkte sind vor allem Touchdowns,
+zwei Spiele Targets, Carries und Snaps vor allem Rolle. `forecast.fit_xfp`
+rechnet die Nutzung eines Spiels per linearer Regression in die Punkte um,
+die sie im Schnitt bringt — gefittet auf den gespielten Wochen der Saison im
+Scoring der jeweiligen Liga. Wie viel davon in die Form eingeht (`lam`), ist
+gefittet: 2025 bei TE und QB ganz, bei IDP zur Hälfte, bei RB/WR nichts.
+
+**Knappe Entscheidungen** (< 1.5 Punkte): deine beste Aufstellung gegen die
+beste deines Gegners, beide mit derselben Prognose (`matchup_stance`). Als
+Favorit (≥ 10 vorn) den Spieler mit kleinerer Streuung, als Außenseiter den
+mit größerer, in Chopped-Ligen immer den sichereren. Die Streuung ist die
+eigene des Spielers, anfangs zur Streuung seiner Position (aus dem Backtest)
+gezogen. Die optimale Aufstellung ändert das nicht, es ist ein Hinweis.
+
 Jeder Faktor liefert seinen Erklärsatz mit; die App zeigt ihn unter jedem
 Spieler, `pts_week_base` ist Sleepers Zahl zum Vergleich, und `/prognose`
 erklärt das Modell aus dem Endpunkt `forecast_model` — also immer das, das
@@ -229,6 +243,12 @@ Score = (max(0, pts − Replacement) + 0.35·pts + 0.25·DVS)
         + Marktdruck-Bonus + Chancen-Bonus + Bedarfs-Bonus
 ```
 
+**Je Ligatyp** (Sleeper `settings.type`, `LEAGUE_PROFILES`): Dynasty zählt
+den Dynasty-Wert mit, Keeper zur Hälfte, Redraft und Chopped gar nicht —
+dort vergleichen Kadertiefe-Moves Punkte pro Woche statt DVS, und junge
+Spieler sind nicht mehr allein wegen ihres Draft-Kapitals geschützt. Chopped
+gewichtet die Wochen 3·2·1·1·1: wer diese Woche Letzter wird, fliegt.
+
 `pts` ist während der Saison **nicht** die Saisonprognose, sondern das Tempo
 der Wochenprognose über diese und die nächsten vier Wochen (Summe der `P`,
 jede Woche gegen ihren Gegner, Bye = 0, × 17 / 5) — dieselbe Prognose wie in
@@ -310,6 +330,22 @@ Danach bauen und deployen — mit einem Befehl, der auch das Secret
 ```bash
 tools/deploy.sh
 ```
+
+### Deploy per GitHub Actions
+
+`.github/workflows/deploy.yml` deployt bei jedem Merge nach `main`: Tests,
+Lint, Build, `firebase deploy`. Einmalig einzurichten unter Settings →
+Secrets and variables → Actions:
+
+| Art | Name | Inhalt |
+|---|---|---|
+| Secret | `FIREBASE_SERVICE_ACCOUNT` | JSON-Key eines Service-Accounts mit den Rollen Firebase Admin, Cloud Functions Admin, Service Account User, Secret Manager Secret Accessor, Cloud Scheduler Admin |
+| Variable | `NEXT_PUBLIC_API_URL` | Basis-URL der Functions, wie in `frontend/.env.local` |
+| Variable | `FSA_ALLOWED_ORIGINS` | wie in `functions/.env` |
+| Variable | `FSA_SNAPSHOT_USERS` | wie in `functions/.env` |
+
+Ohne das Secret baut der Workflow und bricht mit einer Warnung vor dem
+Deploy ab. `tools/deploy.sh` bleibt für den Deploy von Hand.
 
 ### Version
 

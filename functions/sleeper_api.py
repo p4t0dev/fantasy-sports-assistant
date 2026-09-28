@@ -17,9 +17,22 @@ def get_user(username):
     url = f"{BASE_URL}/user/{username}"
     return _make_request(url)
 
+# Season and week change once a week; every model helper asks for them. One
+# overview asked Sleeper 67 times in a row for the same answer.
+_STATE_TTL = 300
+_state_cache = {}
+
+
 def get_state(sport):
+    import time
+    hit = _state_cache.get(sport)
+    if hit and time.time() - hit[0] < _STATE_TTL:
+        return hit[1]
     url = f"{BASE_URL}/state/{sport}"
-    return _make_request(url)
+    state = _make_request(url)
+    if state:
+        _state_cache[sport] = (time.time(), state)
+    return state
 
 def get_leagues(user_id, sport, season):
     url = f"{BASE_URL}/user/{user_id}/leagues/{sport}/{season}"
@@ -71,4 +84,10 @@ def get_schedule(sport, season, season_type="regular"):
     """Every game of a season with home and away team: the one place a
     stadium - and so its weather - can be read off."""
     url = f"https://api.sleeper.com/schedule/{sport}/{season_type}/{season}"
+    return _make_request(url)
+
+
+def get_matchups(league_id, week):
+    """Who plays whom this week: one row per roster, paired by matchup_id."""
+    url = f"{BASE_URL}/league/{league_id}/matchups/{week}"
     return _make_request(url)

@@ -4,43 +4,47 @@
   "results": {
     "QB": {
       "params": {
-        "k": 4.0,
-        "cap": 0.0,
+        "k": 16.0,
+        "cap": 0.15,
         "s_share": 1.0,
         "beta": 0.0,
-        "alpha": 0.0
+        "alpha": 0.5,
+        "lam": 0.0
       },
       "n": 247,
       "pairs": 2343,
+      "sigma": 10.18,
       "sleeper": {
         "mae": 8.28,
         "pairs": 0.5621
       },
       "model": {
-        "mae": 8.28,
-        "pairs": 0.5621
+        "mae": 8.173,
+        "pairs": 0.5651
       },
-      "verdict": "nur Sleeper"
+      "verdict": "Modell"
     },
     "RB": {
       "params": {
-        "k": 32.0,
-        "cap": 0.15,
+        "k": 4.0,
+        "cap": 0.0,
         "s_share": 1.0,
         "beta": 0.0,
-        "alpha": 0.0
+        "alpha": 0.0,
+        "lam": 1.0
       },
       "n": 508,
       "pairs": 7483,
+      "sigma": 7.28,
       "sleeper": {
         "mae": 5.61,
         "pairs": 0.6102
       },
       "model": {
-        "mae": 5.583,
-        "pairs": 0.6153
+        "mae": 5.61,
+        "pairs": 0.6102
       },
-      "verdict": "Modell"
+      "verdict": "nur Sleeper"
     },
     "WR": {
       "params": {
@@ -48,10 +52,12 @@
         "cap": 0.0,
         "s_share": 1.0,
         "beta": 0.0,
-        "alpha": 0.0
+        "alpha": 0.0,
+        "lam": 1.0
       },
       "n": 813,
       "pairs": 21782,
+      "sigma": 6.74,
       "sleeper": {
         "mae": 5.352,
         "pairs": 0.6048
@@ -66,19 +72,21 @@
       "params": {
         "k": 32.0,
         "cap": 0.15,
-        "s_share": 0.5,
+        "s_share": 0.75,
         "beta": 0.0,
-        "alpha": 0.5
+        "alpha": 0.5,
+        "lam": 0.0
       },
       "n": 437,
       "pairs": 5845,
+      "sigma": 7.04,
       "sleeper": {
         "mae": 5.362,
         "pairs": 0.5921
       },
       "model": {
-        "mae": 5.181,
-        "pairs": 0.5979
+        "mae": 5.214,
+        "pairs": 0.6058
       },
       "verdict": "Modell"
     },
@@ -88,10 +96,12 @@
         "cap": 0.0,
         "s_share": 1.0,
         "beta": 0.0,
-        "alpha": 0.0
+        "alpha": 0.0,
+        "lam": 1.0
       },
       "n": 243,
       "pairs": 3332,
+      "sigma": 3.83,
       "sleeper": {
         "mae": 3.07,
         "pairs": 0.5633
@@ -108,10 +118,12 @@
         "cap": 0.0,
         "s_share": 1.0,
         "beta": 0.0,
-        "alpha": 0.0
+        "alpha": 0.0,
+        "lam": 1.0
       },
       "n": 246,
       "pairs": 3251,
+      "sigma": 4.37,
       "sleeper": {
         "mae": 3.451,
         "pairs": 0.5727
@@ -128,17 +140,19 @@
         "cap": 0.5,
         "s_share": 0.5,
         "beta": 0.0,
-        "alpha": 0.0
+        "alpha": 0.0,
+        "lam": 0.5
       },
       "n": 3519,
       "pairs": 30000,
+      "sigma": 6.46,
       "sleeper": {
         "mae": 5.164,
         "pairs": 0.6007
       },
       "model": {
-        "mae": 4.934,
-        "pairs": 0.6255
+        "mae": 4.878,
+        "pairs": 0.6364
       },
       "verdict": "Modell"
     }

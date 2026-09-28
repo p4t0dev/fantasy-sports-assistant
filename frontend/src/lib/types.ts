@@ -105,6 +105,8 @@ export type Usage = {
   snap_pct: number | null;
   avg_pts: number;
   pts_by_week: Record<string, number>;
+  /** Points each game's usage was worth on average (targets, carries, snaps). */
+  xfp_by_week?: Record<string, number | null>;
 };
 
 export type ForecastNote = {
@@ -116,9 +118,32 @@ export type ForecastNote = {
   explain: string[];
 };
 
-export type CloseCall = { in: string; out: string; gap: number };
+export type CloseCall = {
+  in: string;
+  out: string;
+  gap: number;
+  /** One sigma of a week around each forecast. */
+  spread_in?: number;
+  spread_out?: number;
+  /** Who to start given the matchup, or null when it stays a coin flip. */
+  pick?: string | null;
+  advice?: string | null;
+};
 
-export type ForecastParams = { k: number; cap: number; s_share: number; beta: number; alpha: number };
+/** Your best lineup against your opponent's, both through the same forecast. */
+export type MatchupStance = {
+  kind: "favorite" | "underdog" | "even" | "chopped";
+  margin: number | null;
+  opponent: string | null;
+  my_total: number;
+  opp_total: number | null;
+};
+
+export type ForecastParams = {
+  k: number; cap: number; s_share: number; beta: number; alpha: number;
+  /** Share of form that is actual points rather than usage-expected ones. */
+  lam?: number;
+};
 
 export type ForecastModel = {
   params: Record<string, ForecastParams>;
@@ -132,6 +157,7 @@ export type ForecastModel = {
       sleeper: { mae: number; pairs: number };
       model: { mae: number; pairs: number };
       verdict: string;
+      sigma?: number;
     }>;
   } | null;
   form_games: number;
@@ -227,6 +253,7 @@ export type OverviewLeague = {
   changes?: LineupChange[];
   forecast_notes?: ForecastNote[];
   close_calls?: CloseCall[];
+  matchup?: MatchupStance | null;
   current_total?: number;
   total?: number;
   gain?: number;

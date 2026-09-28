@@ -6,7 +6,7 @@ import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import type { LineupIssue, Overview, OverviewLeague, Player } from "@/lib/types";
 import { InjuryBadge, MatchupBadge, PosBadge, startPts } from "@/components/PlayerBadges";
-import { ForecastDelta, ForecastDetail } from "@/components/ForecastDetail";
+import { CloseCalls, ForecastDelta, ForecastDetail, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
 import {
   subscribeToSearch,
@@ -150,16 +150,8 @@ function LeagueCard({
         </div>
       )}
 
-      {(league.close_calls ?? []).length > 0 && (
-        <ul className="space-y-1 text-xs text-yellow-300/90">
-          {(league.close_calls ?? []).map((c, i) => (
-            <li key={i}>
-              Knapp: {c.in} vs. {c.out} ({c.gap > 0 ? "+" : ""}
-              {c.gap} Pkt) — ein Münzwurf, entscheide nach Matchup oder Bauchgefühl.
-            </li>
-          ))}
-        </ul>
-      )}
+      <MatchupLine stance={league.matchup} />
+      <CloseCalls calls={league.close_calls} />
 
       {starterNotes.length > 0 && (
         <details className="text-xs">
@@ -339,14 +331,19 @@ function OverviewContent() {
             Aufstellung optimal
           </h2>
           {fine.map((league) => (
-            <div key={league.league_id} className="flex justify-between gap-3 text-sm">
-              <Link
-                href={`/lineup?${linkParams}&league_id=${league.league_id}`}
-                className="text-gray-200 hover:text-white"
-              >
-                ✓ {league.name}
-              </Link>
-              <span className="text-gray-500">{league.total}</span>
+            <div key={league.league_id} className="text-sm">
+              <div className="flex justify-between gap-3">
+                <Link
+                  href={`/lineup?${linkParams}&league_id=${league.league_id}`}
+                  className="text-gray-200 hover:text-white"
+                >
+                  ✓ {league.name}
+                </Link>
+                <span className="text-gray-500">{league.total}</span>
+              </div>
+              <div className="pl-4">
+                <MatchupLine stance={league.matchup} compact />
+              </div>
             </div>
           ))}
         </div>

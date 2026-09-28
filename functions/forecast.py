@@ -38,13 +38,13 @@ FORM_GAMES = 4
 # leaves; beta / alpha: how much of the raw role and matchup signal survives -
 # Sleeper prices in part of both.
 PARAMS = {
-    "QB":  {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 0.0, "alpha": 0.5},
-    "RB":  {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 1.0, "alpha": 0.5},
-    "WR":  {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 1.0, "alpha": 0.5},
-    "TE":  {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 1.0, "alpha": 0.5},
-    "K":   {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 0.0, "alpha": 0.5},
-    "DEF": {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 0.0, "alpha": 0.5},
-    "IDP": {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 0.0, "alpha": 0.5},
+    "QB":  {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 0.0, "alpha": 0.5, "lam": 1.0},
+    "RB":  {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 1.0, "alpha": 0.5, "lam": 1.0},
+    "WR":  {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 1.0, "alpha": 0.5, "lam": 1.0},
+    "TE":  {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 1.0, "alpha": 0.5, "lam": 1.0},
+    "K":   {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 0.0, "alpha": 0.5, "lam": 1.0},
+    "DEF": {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 0.0, "alpha": 0.5, "lam": 1.0},
+    "IDP": {"k": 4.0, "cap": 0.5, "s_share": 0.75, "beta": 0.0, "alpha": 0.5, "lam": 1.0},
 }
 
 PARAMS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data",
@@ -65,6 +65,34 @@ BACKTEST = _load_backtest()
 for _group, _result in ((BACKTEST or {}).get("results") or {}).items():
     if _group in PARAMS:
         PARAMS[_group] = dict(_result["params"])
+
+# How far a single week lands from the forecast, per position group: the
+# spread of actual minus forecast on the backtest's test weeks. Replaced by
+# the backtest's own number where it has one. Used for floor and ceiling.
+SIGMA = {"QB": 10.3, "RB": 7.0, "WR": 6.7, "TE": 6.5, "K": 3.9, "DEF": 4.3, "IDP": 6.2}
+for _group, _result in ((BACKTEST or {}).get("results") or {}).items():
+    if _group in SIGMA and _result.get("sigma"):
+        SIGMA[_group] = _result["sigma"]
+# Games a player's own spread needs before it counts as much as his group's.
+SIGMA_PRIOR_GAMES = 4
+
+
+def spread(pos, weekly_points):
+    """How much one of his weeks swings around the forecast (one sigma).
+
+    His own spread, pulled towards his position's until he has played enough
+    games for it to mean something - two games say little about variance.
+    """
+    base = SIGMA.get(group_of(pos) or "WR", 6.5)
+    pts = [p for p in weekly_points if p is not None]
+    n = len(pts)
+    if n < 2:
+        return round(base, 1)
+    mean = sum(pts) / n
+    own = sum((p - mean) ** 2 for p in pts) / (n - 1)
+    k = SIGMA_PRIOR_GAMES
+    return round(((n * own + k * base ** 2) / (n + k)) ** 0.5, 1)
+
 
 K_MIN, K_MAX = 0.75, 1.25
 ROLE_MAX = 0.15
@@ -94,13 +122,93 @@ def _fmt(value):
     return f"{value:.1f}"
 
 
+# ---- xFP: points the usage was worth ---------------------------------------
+#
+# Two games of points are mostly touchdowns; two games of targets, carries and
+# snaps are mostly role. xFP turns a game's usage into the points that usage
+# scores on average, fitted by least squares on the played weeks of the same
+# season in the league's own scoring - so a PPR league and a standard league
+# each get their own coefficients, and early-season noise in one player's
+# points does not leak into his form.
+
+XFP_FEATURES = {
+    "QB": ["pass_att", "pass_rz_att", "rush_att", "rush_rz_att"],
+    "RB": ["rush_att", "rush_rz_att", "rec_tgt", "rec_rz_tgt", "off_snp"],
+    "WR": ["rec_tgt", "rec_rz_tgt", "off_snp"],
+    "TE": ["rec_tgt", "rec_rz_tgt", "off_snp"],
+    "IDP": ["def_snp"],
+}
+XFP_MIN_ROWS = 40
+XFP_RIDGE = 1e-3
+
+
+def _solve(a, b):
+    """Gaussian elimination with partial pivoting; a is n x n."""
+    n = len(b)
+    m = [row[:] + [b[i]] for i, row in enumerate(a)]
+    for c in range(n):
+        pivot = max(range(c, n), key=lambda r: abs(m[r][c]))
+        if abs(m[pivot][c]) < 1e-12:
+            return None
+        m[c], m[pivot] = m[pivot], m[c]
+        for r in range(n):
+            if r != c:
+                f = m[r][c] / m[c][c]
+                m[r] = [x - f * y for x, y in zip(m[r], m[c])]
+    return [m[i][n] / m[i][i] for i in range(n)]
+
+
+def fit_xfp(rows):
+    """{group: [intercept, coef...]} from [(group, stats, points)] rows."""
+    by_group = {}
+    for group, stats, pts in rows:
+        if group in XFP_FEATURES and stats.get("off_snp" if group != "IDP" else "def_snp"):
+            by_group.setdefault(group, []).append((stats, pts))
+    model = {}
+    for group, data in by_group.items():
+        if len(data) < XFP_MIN_ROWS:
+            continue
+        feats = XFP_FEATURES[group]
+        k = len(feats) + 1
+        xtx = [[0.0] * k for _ in range(k)]
+        xty = [0.0] * k
+        for stats, pts in data:
+            x = [1.0] + [float(stats.get(f) or 0) for f in feats]
+            for i in range(k):
+                xty[i] += x[i] * pts
+                for j in range(k):
+                    xtx[i][j] += x[i] * x[j]
+        for i in range(1, k):
+            xtx[i][i] += XFP_RIDGE * len(data)
+        coef = _solve(xtx, xty)
+        if coef:
+            model[group] = [round(c, 5) for c in coef]
+    return model
+
+
+def xfp(stats, group, model):
+    """Expected points of one game's usage, or None without a model."""
+    coef = (model or {}).get(group)
+    if not coef:
+        return None
+    x = [1.0] + [float(stats.get(f) or 0) for f in XFP_FEATURES[group]]
+    return round(max(0.0, sum(c * v for c, v in zip(coef, x))), 2)
+
+
 # ---- B: the base ---------------------------------------------------------
 
-def form(history):
-    """(F, n) from a player's played games, newest last."""
-    recent = [p for p in history[-FORM_GAMES:]]
+def form(history, xfp_history=None, lam=1.0):
+    """(F, n) from a player's played games, newest last.
+
+    Each game counts as `lam` of its actual points and `1 - lam` of its xFP -
+    how much the points are believed over the usage is fitted per position.
+    """
+    recent = list(history[-FORM_GAMES:])
     if not recent:
         return None, 0
+    xs = list((xfp_history or [])[-FORM_GAMES:])
+    if lam < 1 and len(xs) == len(recent) and all(x is not None for x in xs):
+        recent = [lam * a + (1 - lam) * x for a, x in zip(recent, xs)]
     return round(sum(recent) / len(recent), 2), len(recent)
 
 
@@ -250,11 +358,15 @@ def availability(injury):
 # ---- P: putting it together ------------------------------------------------
 
 def forecast(pos, S, history, Q, usage_adj=None, allowed=None, league_avg=None,
-             opp_games=0, vegas_ratio=None, wx=None, injury=None, locked=False):
+             opp_games=0, vegas_ratio=None, wx=None, injury=None, locked=False,
+             xfp_history=None):
     """The forecast for one player and one week, with every part explained."""
     group = group_of(pos) or "WR"
     params = PARAMS[group]
-    F, n = form(history)
+    lam = params.get("lam", 1.0)
+    F, n = form(history, xfp_history, lam)
+    uses_xfp = (lam < 1 and bool(xfp_history) and len(xfp_history[-FORM_GAMES:]) == n
+                and all(x is not None for x in xfp_history[-FORM_GAMES:]))
     B, (g_s, g_f, g_q) = base(S, F, n, Q, params)
 
     R = role_factor(usage_adj, params)
@@ -272,18 +384,20 @@ def forecast(pos, S, history, Q, usage_adj=None, allowed=None, league_avg=None,
         "notes": {"weather": weather_note, "availability": availability_note},
         "explain": explain(S, F, n, Q, g_s, g_f, g_q, B, R, M, W, K, A, P,
                            weather_note, availability_note, allowed, league_avg,
-                           vegas_ratio),
+                           vegas_ratio, lam if uses_xfp else 1.0),
     }
 
 
 def explain(S, F, n, Q, g_s, g_f, g_q, B, R, M, W, K, A, P, weather_note,
-            availability_note, allowed, league_avg, vegas_ratio):
+            availability_note, allowed, league_avg, vegas_ratio, lam=1.0):
     """The forecast as the lines the app prints under it."""
     parts = []
     if S is not None and g_s:
         parts.append(f"{round(g_s * 100)} % Sleeper {_fmt(S)}")
     if F is not None and g_f:
-        parts.append(f"{round(g_f * 100)} % Form {_fmt(F)} ({n} Sp.)")
+        mix = (f", davon {round(lam * 100)} % echte Punkte, {round((1 - lam) * 100)} % "
+               "erwartet aus Nutzung" if lam < 1 else "")
+        parts.append(f"{round(g_f * 100)} % Form {_fmt(F)} ({n} Sp.{mix})")
     if Q is not None and g_q:
         parts.append(f"{round(g_q * 100)} % Qualität {_fmt(Q)}")
     lines = [f"Basis {_fmt(B)} = " + " + ".join(parts)]
