@@ -22,6 +22,7 @@ import {
   SlotBadge,
 } from "@/components/PlayerBadges";
 import NeedCard from "@/components/NeedCard";
+import { Section, SectionNav, useSections } from "@/components/Section";
 import { HorizonDetail, waiverPts } from "@/components/ForecastDetail";
 import { PosFilter, SortBar, sortBy, type SortOption } from "@/components/Controls";
 
@@ -65,6 +66,18 @@ type WaiverData = {
   /** The waiver strategy for this league's format. */
   profile?: { key: "dynasty" | "keeper" | "redraft" | "chopped"; label: string } | null;
 };
+
+// The page's foldable sections, in page order. Folding is remembered per
+// browser, the same for every league: someone who never reads the drop list
+// does not want to fold it again in each of nine leagues.
+const SECTIONS = [
+  { id: "bedarf", label: "Bedarf" },
+  { id: "moves", label: "Moves" },
+  { id: "team", label: "Mein Team" },
+  { id: "targets", label: "Top Targets" },
+  { id: "drops", label: "Drops" },
+];
+const SECTION_IDS = SECTIONS.map((s) => s.id);
 
 // What each league format changes on this page (api_core.LEAGUE_PROFILES).
 const PROFILE_TEXT: Record<string, string> = {
@@ -196,7 +209,7 @@ function WaiversContent() {
   const [dropFilter, setDropFilter] = useState<string | null>(null);
   const [sortId, setSortId] = useState("score");
   const [dropSortId, setDropSortId] = useState("order");
-  const [showTeam, setShowTeam] = useState(true);
+  const sections = useSections("waivers.sections", SECTION_IDS);
 
   // State is only written after the await, so the effect never triggers a
   // synchronous cascading render.
@@ -371,20 +384,44 @@ function WaiversContent() {
         </div>
       </div>
 
+      <SectionNav
+        items={SECTIONS.filter(
+          (s) =>
+            (s.id !== "bedarf" || needs.length > 0) &&
+            (s.id !== "moves" || recommendations.length > 0) &&
+            (s.id !== "team" || !!lineup),
+        )}
+        state={sections}
+      />
+
       {needs.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {needs.map((need) => (
-            <NeedCard key={need.pos} need={need} />
-          ))}
-        </div>
+        <Section
+          id="bedarf"
+          title="Team-Bedarf"
+          accent="bg-yellow-500"
+          meta={`${needs.length} Position${needs.length === 1 ? "" : "en"}`}
+          summary={needs.map((n) => `${n.pos}: ${n.label ?? n.kind ?? ""}`).join(" · ")}
+          state={sections}
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {needs.map((need) => (
+              <NeedCard key={need.pos} need={need} />
+            ))}
+          </div>
+        </Section>
       )}
 
       {recommendations.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-8 bg-blue-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-white">Empfohlene Moves</h2>
-          </div>
+        <Section
+          id="moves"
+          title="Empfohlene Moves"
+          accent="bg-blue-500"
+          meta={`${recommendations.length}`}
+          summary={recommendations
+            .map((r) => `${r.add.name} für ${r.drop.name}`)
+            .join(" · ")}
+          state={sections}
+        >
 
           {data?.moves_note && (
             <p className="glass-panel p-3 text-sm text-blue-100 border-l-4 border-l-blue-500 bg-blue-900/10 leading-relaxed">
@@ -489,24 +526,24 @@ function WaiversContent() {
               </div>
             ))}
           </div>
-        </div>
+        </Section>
       )}
 
       {lineup && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-8 bg-purple-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-white">Mein Team</h2>
-            <span className="text-sm text-gray-500">
-              Startaufstellung {lineup.total} Punkte projiziert
-            </span>
-            <button
-              onClick={() => setShowTeam((v) => !v)}
-              className="ml-auto px-3 py-1 rounded-md text-xs font-semibold border bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
-            >
-              {showTeam ? "Einklappen" : "Ausklappen"}
-            </button>
-          </div>
+        <Section
+          id="team"
+          title="Mein Team"
+          accent="bg-purple-500"
+          meta={
+            // In season the board counts in forecast pace (per week x 17);
+            // the lineup total is shown per week, like everything else here.
+            data?.horizon
+              ? `Startaufstellung ${(lineup.total / 17).toFixed(1)} Pkt/Woche`
+              : `Startaufstellung ${lineup.total} Punkte projiziert`
+          }
+          summary={rosterDepth.map((d) => `${d.pos} ${d.count}/${d.needed}`).join(" · ")}
+          state={sections}
+        >
 
           {rosterDepth.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
@@ -516,7 +553,6 @@ function WaiversContent() {
             </div>
           )}
 
-          {showTeam && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
@@ -547,19 +583,21 @@ function WaiversContent() {
                 )}
               </div>
             </div>
-          )}
-        </div>
+        </Section>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="w-2 h-8 bg-green-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-white">Top Targets</h2>
-            <span className="text-sm text-gray-500">
-              {visibleTargets.length} von {targets.length}
-            </span>
-          </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 items-start">
+        <Section
+          id="targets"
+          title="Top Targets"
+          accent="bg-green-500"
+          meta={`${visibleTargets.length} von ${targets.length}`}
+          summary={targets
+            .slice(0, 3)
+            .map((t) => t.name)
+            .join(" · ")}
+          state={sections}
+        >
 
           <SortBar options={TARGET_SORTS} active={sortId} onPick={setSortId} />
 
@@ -614,16 +652,19 @@ function WaiversContent() {
               </div>
             ))}
           </div>
-        </div>
+        </Section>
 
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="w-2 h-8 bg-red-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-white">Drop-Kandidaten</h2>
-            <span className="text-sm text-gray-500">
-              {visibleDrops.length} von {drops.length}
-            </span>
-          </div>
+        <Section
+          id="drops"
+          title="Drop-Kandidaten"
+          accent="bg-red-500"
+          meta={`${visibleDrops.length} von ${drops.length}`}
+          summary={drops
+            .slice(0, 3)
+            .map((d) => d.name)
+            .join(" · ")}
+          state={sections}
+        >
 
           <SortBar options={DROP_SORTS} active={dropSortId} onPick={setDropSortId} />
 
@@ -682,7 +723,7 @@ function WaiversContent() {
               </div>
             ))}
           </div>
-        </div>
+        </Section>
       </div>
     </div>
   );
