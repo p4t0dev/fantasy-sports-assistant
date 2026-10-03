@@ -95,7 +95,7 @@ export default function Dashboard() {
   const waiverSummary = !overview?.waivers
     ? "Waiver-Plan kommt mit dem nächsten Datenlauf"
     : upgradeMoves
-    ? `Waiver: ${upgradeMoves} Startelf-Upgrade${upgradeMoves === 1 ? "" : "s"} in ${upgradeLeagues} Liga${upgradeLeagues === 1 ? "" : "en"}`
+    ? `Waiver: ${upgradeMoves} Startelf-Upgrade${upgradeMoves === 1 ? "" : "s"} in ${upgradeLeagues} ${upgradeLeagues === 1 ? "Liga" : "Ligen"}`
     : `Waiver: keine Startelf-Upgrades · ${waiverLeagues.filter((l) => l.moves.length).length} Ligen mit Kadertiefe-Moves`;
   const urgentCount = overviewLeagues.filter((l) => l.severity >= 2).length;
   const hintCount = overviewLeagues.filter((l) => l.severity === 1).length;

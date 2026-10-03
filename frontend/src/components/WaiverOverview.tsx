@@ -111,6 +111,19 @@ function LeagueWaivers({ league, linkParams }: { league: WaiverLeague; linkParam
   );
 }
 
+/** The waiver plan in one line - shown folded, and over the leagues. */
+export function waiverSummary(leagues: WaiverLeague[]): string {
+  const active = leagues.filter((l) => !l.skipped);
+  const upgrade = active.filter((l) => l.lineup_moves > 0);
+  const lineupMoves = upgrade.reduce((n, l) => n + l.lineup_moves, 0);
+  const depthMoves = active.reduce((n, l) => n + l.moves.length, 0) - lineupMoves;
+  const depthLeagues = active.filter((l) => l.moves.length > l.lineup_moves).length;
+  return (
+    `${lineupMoves} Startelf-Upgrade${lineupMoves === 1 ? "" : "s"} in ${upgrade.length} ` +
+    `${upgrade.length === 1 ? "Liga" : "Ligen"} · ${depthMoves} Kadertiefe-Moves in ${depthLeagues} Ligen`
+  );
+}
+
 export default function WaiverOverview({
   leagues,
   linkParams,
@@ -121,22 +134,12 @@ export default function WaiverOverview({
   const active = leagues.filter((l) => !l.skipped);
   const upgrade = active.filter((l) => l.lineup_moves > 0);
   const depth = active.filter((l) => l.lineup_moves === 0);
-  const lineupMoves = upgrade.reduce((n, l) => n + l.lineup_moves, 0);
-  const depthMoves = active.reduce((n, l) => n + l.moves.length, 0) - lineupMoves;
 
   return (
-    <section id="waiver" className="space-y-4 scroll-mt-20">
-      <div>
-        <h2 className="text-2xl font-bold text-white">Waiver</h2>
-        <p className="text-sm text-gray-400 mt-1">
-          <span className={lineupMoves ? "text-green-400 font-medium" : ""}>
-            {lineupMoves} Startelf-Upgrade{lineupMoves === 1 ? "" : "s"}
-          </span>{" "}
-          in {upgrade.length} Liga{upgrade.length === 1 ? "" : "en"} · {depthMoves} Kadertiefe-Moves in{" "}
-          {depth.length + upgrade.filter((l) => l.moves.length > l.lineup_moves).length} Ligen ·
-          Punkte = Prognose Ø pro Woche über die nächsten 5 Wochen
-        </p>
-      </div>
+    <div className="space-y-4">
+      <p className="text-sm text-gray-400">
+        {waiverSummary(leagues)} · Punkte = Prognose Ø pro Woche über die nächsten 5 Wochen
+      </p>
 
       {upgrade.map((league) => (
         <div key={league.league_id} className="glass-panel p-5 border-l-4 border-l-green-500 bg-green-900/5 space-y-3">
@@ -173,6 +176,6 @@ export default function WaiverOverview({
             .join(", ")}
         </p>
       )}
-    </section>
+    </div>
   );
 }

@@ -20,6 +20,10 @@ const nextConfig: NextConfig = {
   // directory is never produced and a deploy ships nothing.
   output: "export",
   images: { unoptimized: true },
+  // Dev server only. Next blocks its dev resources (HMR) for any origin but
+  // the one it started on, `localhost`; opened as 127.0.0.1, pages that read
+  // the URL hung on their spinner. Has no effect on the static export.
+  allowedDevOrigins: ["127.0.0.1"],
   env: {
     NEXT_PUBLIC_APP_VERSION: pkg.version,
     NEXT_PUBLIC_GIT_SHA: gitSha(),
