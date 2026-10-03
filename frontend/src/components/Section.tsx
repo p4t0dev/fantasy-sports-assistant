@@ -20,13 +20,18 @@ export function useSections(storageKey: string, ids: string[]): SectionState {
   // Read after mount: the static page renders every section open, and the
   // stored preference is applied once the browser is known.
   useEffect(() => {
+    let stored: Record<string, boolean> = {};
     try {
       const raw = window.localStorage.getItem(storageKey);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- a stored preference, read once after mount
-      if (raw) setClosed(JSON.parse(raw));
+      if (raw) stored = JSON.parse(raw);
     } catch {
       /* no storage: everything stays open */
     }
+    // A link to "#waiver" means: show me that section - folded or not.
+    const target = window.location.hash.slice(1);
+    if (target && target in stored) stored = { ...stored, [target]: false };
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a stored preference, read once after mount
+    setClosed(stored);
   }, [storageKey]);
 
   const save = useCallback(

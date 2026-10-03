@@ -8,7 +8,8 @@ import type { LineupIssue, Overview, OverviewLeague, Player } from "@/lib/types"
 import { InjuryBadge, MatchupBadge, PosBadge, startPts } from "@/components/PlayerBadges";
 import { CloseCalls, ForecastDelta, ForecastDetail, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
-import WaiverOverview from "@/components/WaiverOverview";
+import WaiverOverview, { waiverSummary } from "@/components/WaiverOverview";
+import { Section, SectionNav, useSections } from "@/components/Section";
 import {
   subscribeToSearch,
   getSearchSnapshot,
@@ -200,6 +201,12 @@ function snapshotAge(generatedAt: number): { label: string; stale: boolean } {
   return { label, stale: hours > STALE_AFTER_HOURS };
 }
 
+const SECTIONS = [
+  { id: "aufstellung", label: "Aufstellung" },
+  { id: "waiver", label: "Waiver" },
+];
+const SECTION_IDS = SECTIONS.map((s) => s.id);
+
 function OverviewContent() {
   const searchParams = useSearchParams();
   const cached = useSyncExternalStore(subscribeToSearch, getSearchSnapshot, getSearchServerSnapshot);
@@ -209,6 +216,7 @@ function OverviewContent() {
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const sections = useSections("overview.sections", SECTION_IDS);
 
   useEffect(() => {
     if (!username) return;
@@ -293,9 +301,6 @@ function OverviewContent() {
             {data.week ? ` · Woche ${data.week}` : ""} ·{" "}
             <span className="text-gray-200 font-medium">{data.username}</span>
           </p>
-          <a href="#waiver" className="inline-block mt-1 text-sm text-blue-400 hover:text-blue-300">
-            Zu den Waivern ↓
-          </a>
           <p className={`text-xs mt-1 ${age.stale ? "text-orange-300" : "text-gray-500"}`}>
             Stand {stamp} ({age.label}) · wird morgens, mittags und abends neu berechnet
             {age.stale && " — der letzte Lauf ist ausgeblieben"}
@@ -309,6 +314,22 @@ function OverviewContent() {
         </Link>
       </div>
 
+      <SectionNav items={SECTIONS} state={sections} />
+
+      <Section
+        id="aufstellung"
+        title="Aufstellung"
+        accent="bg-green-500"
+        meta={`${flagged.length + fine.length} Ligen`}
+        summary={
+          urgent
+            ? `${urgent} mit Handlungsbedarf · ${flagged.length - urgent} mit Hinweisen`
+            : flagged.length
+            ? `${flagged.length} mit Hinweisen · ${fine.length} in Ordnung`
+            : `alle ${fine.length} in Ordnung`
+        }
+        state={sections}
+      >
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { n: urgent, label: "Handlungsbedarf", tone: urgent ? "text-red-300" : "text-gray-500" },
@@ -374,17 +395,25 @@ function OverviewContent() {
         </div>
       )}
 
-      {data.waivers ? (
-        <WaiverOverview leagues={data.waivers.leagues} linkParams={linkParams} />
-      ) : (
-        <section id="waiver" className="glass-panel p-5 space-y-2 scroll-mt-20">
-          <h2 className="text-2xl font-bold text-white">Waiver</h2>
-          <p className="text-sm text-gray-400">
+      </Section>
+
+      <Section
+        id="waiver"
+        title="Waiver"
+        accent="bg-blue-500"
+        meta={data.waivers ? `${data.waivers.leagues.filter((l) => !l.skipped).length} Ligen` : undefined}
+        summary={data.waivers ? waiverSummary(data.waivers.leagues) : "noch nicht berechnet"}
+        state={sections}
+      >
+        {data.waivers ? (
+          <WaiverOverview leagues={data.waivers.leagues} linkParams={linkParams} />
+        ) : (
+          <p className="glass-panel p-5 text-sm text-gray-400">
             Dieser Stand ist älter als der Waiver-Plan. Er wird beim nächsten Datenlauf (06:00,
             12:00, 18:00) mit berechnet — oder sofort über „Daten aktualisieren“ oben rechts.
           </p>
-        </section>
-      )}
+        )}
+      </Section>
     </div>
   );
 }
