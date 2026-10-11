@@ -4,7 +4,7 @@
 #   secret   FIREBASE_SERVICE_ACCOUNT  JSON key of a service account with
 #                                      Firebase Admin, Cloud Functions Admin,
 #                                      Service Account User, Secret Manager
-#                                      Secret Accessor, Cloud Scheduler Admin
+#                                      Viewer, Cloud Scheduler Admin
 #   variable NEXT_PUBLIC_API_URL       base URL of the functions
 #   variable FSA_ALLOWED_ORIGINS       as in functions/.env
 #   variable FSA_SNAPSHOT_USERS        as in functions/.env
@@ -34,8 +34,9 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          # The functions run on Python 3.14 (gen2); firebase-tools reads the
-          # runtime off the venv, so the venv has to be that version.
+          # The functions run on Python 3.14 (gen2, "runtime" in firebase.json);
+          # firebase-tools calls python3.14 inside the venv, so the venv has to
+          # be that version.
           python-version: "3.14"
 
       - uses: actions/setup-node@v5
@@ -84,5 +85,6 @@ jobs:
         run: |
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
           export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
-          npx -y firebase-tools@14 deploy --non-interactive --force
+          # 15 or later: 14 does not know python314 and looks for python3.13.
+          npx -y firebase-tools@15 deploy --non-interactive --force
           echo "Deployt: v$(node -p "require('./frontend/package.json').version") ($(git rev-parse --short HEAD))" >> "$GITHUB_STEP_SUMMARY"

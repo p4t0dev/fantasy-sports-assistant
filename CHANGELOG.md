@@ -7,6 +7,7 @@ PR zuordnen. Ein Nachbessern ohne neuen PR erhöht nur den Patch.
 
 | Version | PR | Inhalt |
 |---|---|---|
+| 0.15.0 | [#15](https://github.com/p4t0dev/fantasy-sports-assistant/pull/15) | Deploy per Actions: firebase-tools 15 (14 kennt Python 3.14 nicht und suchte `python3.13` im venv), Runtime `python314` fest in `firebase.json`; Rollen des Deploy-Kontos korrigiert (Secret Manager Viewer) |
 | 0.14.0 | [#14](https://github.com/p4t0dev/fantasy-sports-assistant/pull/14) | Deploy-Workflow grün ohne Konfiguration (vorher rot bei jedem Merge), aktuelle Action-Versionen; zuklappbare Abschnitte auf Aufstellung und Wochenübersicht; ESPN-Ausfälle nicht mehr als „kein College-Profil“ gespeichert, Fehltreffer nach 30 Tagen neu geprüft; Dev-Server über 127.0.0.1; Altlasten entfernt |
 | 0.13.0 | [#13](https://github.com/p4t0dev/fantasy-sports-assistant/pull/13) | Dashboard-Box zeigt den Waiver-Stand und verlinkt direkt zu den Waivern; Wochenübersicht zeigt den Waiver-Bereich immer (mit Hinweis, solange der Snapshot älter ist); Sprung zu `#waiver` nach dem Laden |
 | 0.12.0 | [#12](https://github.com/p4t0dev/fantasy-sports-assistant/pull/12) | Waiver-Seite: alle Abschnitte zuklappbar (mit Kurzfassung im zugeklappten Zustand, pro Browser gemerkt), Sprungleiste mit „Alle zu/auf“; Startaufstellung in Pkt/Woche statt Saison-Hochrechnung |
