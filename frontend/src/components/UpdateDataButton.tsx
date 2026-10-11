@@ -8,10 +8,40 @@ import { apiUrl } from "@/lib/api";
 // entered once and kept in this browser only.
 const TOKEN_KEY = "fsa_refresh_token";
 
+const SPORTS = [
+  { id: "nfl", label: "NFL" },
+  { id: "nba", label: "NBA" },
+];
+
+type RefreshResult = { label: string; ok: boolean; status: number; message: string };
+
+async function refresh(sport: { id: string; label: string }, token: string): Promise<RefreshResult> {
+  try {
+    const res = await fetch(apiUrl("update_data", { sport: sport.id }), {
+      method: "POST",
+      headers: { "X-Refresh-Token": token },
+    });
+    const data = await res.json().catch(() => ({}));
+    const ok = res.ok && data.status === "success";
+    return {
+      label: sport.label,
+      ok,
+      status: res.status,
+      message: ok ? data.message : data.error || data.message || "Update fehlgeschlagen",
+    };
+  } catch (err) {
+    console.error(err);
+    return { label: sport.label, ok: false, status: 0, message: "Netzwerkfehler" };
+  }
+}
+
 export default function UpdateDataButton() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [failed, setFailed] = useState(false);
+  // The full server messages (what was loaded, which overviews were rebuilt),
+  // on hover - the line next to the button only says which sport worked.
+  const [detail, setDetail] = useState("");
 
   const requestToken = (): string | null => {
     const stored = window.localStorage.getItem(TOKEN_KEY);
@@ -30,46 +60,43 @@ export default function UpdateDataButton() {
 
     setIsUpdating(true);
     setStatusMsg("");
+    setDetail("");
     setFailed(false);
 
-    try {
-      const res = await fetch(apiUrl("update_data"), {
-        method: "POST",
-        headers: { "X-Refresh-Token": token },
-      });
-      const data = await res.json().catch(() => ({}));
+    // Both sports at once, as two calls: each runs in its own function
+    // instance with its own time limit, so the wait is the slower of the two
+    // rather than their sum - one call doing both would come close to the
+    // five minutes the function gets.
+    const results = await Promise.all(SPORTS.map((sport) => refresh(sport, token)));
 
-      if (res.ok && data.status === "success") {
-        setStatusMsg("✅ " + data.message);
-        setTimeout(() => setStatusMsg(""), 6000);
-      } else {
-        if (res.status === 401) {
-          // Wrong token - drop it so the next click asks again.
-          window.localStorage.removeItem(TOKEN_KEY);
-        }
-        setFailed(true);
-        setStatusMsg("❌ " + (data.error || data.message || "Update fehlgeschlagen"));
-      }
-    } catch (err) {
-      console.error(err);
-      setFailed(true);
-      setStatusMsg("❌ Netzwerkfehler");
-    } finally {
-      setIsUpdating(false);
+    if (results.some((r) => r.status === 401)) {
+      // Wrong token - drop it so the next click asks again.
+      window.localStorage.removeItem(TOKEN_KEY);
     }
+    const anyFailed = results.some((r) => !r.ok);
+    setFailed(anyFailed);
+    setStatusMsg(
+      results.map((r) => `${r.ok ? "✅" : "❌"} ${r.label}${r.ok ? "" : `: ${r.message}`}`).join(" · "),
+    );
+    setDetail(results.map((r) => `${r.label}: ${r.message}`).join("\n"));
+    if (!anyFailed) setTimeout(() => setStatusMsg(""), 8000);
+    setIsUpdating(false);
   };
 
   return (
     <div className="flex items-center gap-3">
       {statusMsg && (
-        <span className={`text-sm font-medium ${failed ? "text-red-400" : "text-green-400"}`}>
+        <span
+          title={detail || undefined}
+          className={`text-sm font-medium ${failed ? "text-red-400" : "text-green-400"}`}
+        >
           {statusMsg}
         </span>
       )}
       <button
         onClick={handleUpdate}
         disabled={isUpdating}
-        title="Manueller Datenrefresh. Läuft täglich ohnehin automatisch."
+        title="Lädt NFL- und NBA-Daten neu und baut die Wochenübersichten. Läuft mehrmals täglich ohnehin automatisch."
         className="bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg flex items-center gap-2"
       >
         {isUpdating ? (
