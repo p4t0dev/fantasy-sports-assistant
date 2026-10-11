@@ -397,7 +397,7 @@ Secrets and variables → Actions:
 
 | Art | Name | Inhalt |
 |---|---|---|
-| Secret | `FIREBASE_SERVICE_ACCOUNT` | JSON-Key eines Service-Accounts mit den Rollen Firebase Admin, Cloud Functions Admin, Service Account User, Secret Manager Secret Accessor, Cloud Scheduler Admin |
+| Secret | `FIREBASE_SERVICE_ACCOUNT` | JSON-Key eines Service-Accounts mit den Rollen Firebase Admin, Cloud Functions Admin, Service Account User, Secret Manager Viewer, Cloud Scheduler Admin. Eigenes Konto anlegen (z. B. `github-deploy`), nicht die vorhandenen Standard- oder Admin-SDK-Konten |
 | Variable | `NEXT_PUBLIC_API_URL` | Basis-URL der Functions, wie in `frontend/.env.local` |
 | Variable | `FSA_ALLOWED_ORIGINS` | wie in `functions/.env` |
 | Variable | `FSA_SNAPSHOT_USERS` | wie in `functions/.env` |

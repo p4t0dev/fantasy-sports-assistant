@@ -3,6 +3,7 @@
     {
       "source": "functions",
       "codebase": "default",
+      "runtime": "python314",
       "ignore": [
         "venv",
         ".venv",
