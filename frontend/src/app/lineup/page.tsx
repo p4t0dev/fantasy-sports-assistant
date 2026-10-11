@@ -16,6 +16,7 @@ import {
 } from "@/components/PlayerBadges";
 import { CloseCalls, ForecastDelta, ForecastDetail, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
+import { Section, SectionNav, useSections } from "@/components/Section";
 
 type LineupData = {
   league: { name: string; teams: number };
@@ -272,6 +273,12 @@ function HowItWorks({
   );
 }
 
+const SECTIONS = [
+  { id: "aufstellung", label: "Aufstellung" },
+  { id: "bank", label: "Bank" },
+];
+const SECTION_IDS = SECTIONS.map((s) => s.id);
+
 function LineupContent() {
   const searchParams = useSearchParams();
   const username = searchParams.get("username");
@@ -283,6 +290,7 @@ function LineupContent() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
+  const sections = useSections("lineup.sections", SECTION_IDS);
 
   useEffect(() => {
     if (!username || !leagueId) return;
@@ -516,15 +524,21 @@ function LineupContent() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="w-2 h-8 bg-green-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-white">Aufstellung</h2>
-            <span className="text-sm text-gray-500">
-              optimal {data?.total} · aktuell {data?.current_total}
-            </span>
-          </div>
+      <SectionNav items={SECTIONS} state={sections} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+        <div className="lg:col-span-2">
+        <Section
+          id="aufstellung"
+          title="Aufstellung"
+          accent="bg-green-500"
+          meta={`optimal ${data?.total} · aktuell ${data?.current_total}`}
+          summary={seats
+            .filter((s) => s.optimal)
+            .map((s) => s.optimal!.name)
+            .join(" · ")}
+          state={sections}
+        >
 
           <div className="space-y-2">
             {seats.map((seat) => (
@@ -541,14 +555,21 @@ function LineupContent() {
               />
             ))}
           </div>
+        </Section>
         </div>
 
-        <div className="lg:col-span-1 space-y-4">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-8 bg-gray-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-white">Bank</h2>
-            <span className="text-sm text-gray-500">{bench.length}</span>
-          </div>
+        <div className="lg:col-span-1">
+        <Section
+          id="bank"
+          title="Bank"
+          accent="bg-gray-500"
+          meta={`${bench.length}`}
+          summary={bench
+            .slice(0, 4)
+            .map((p) => p.name)
+            .join(" · ")}
+          state={sections}
+        >
 
           <div className="space-y-2">
             {bench.map((p) => (
@@ -586,6 +607,7 @@ function LineupContent() {
               </div>
             )}
           </div>
+        </Section>
         </div>
       </div>
     </div>

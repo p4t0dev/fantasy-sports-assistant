@@ -351,8 +351,8 @@ Secrets and variables → Actions:
 | Variable | `FSA_ALLOWED_ORIGINS` | wie in `functions/.env` |
 | Variable | `FSA_SNAPSHOT_USERS` | wie in `functions/.env` |
 
-Ohne das Secret baut der Workflow und bricht mit einer Warnung vor dem
-Deploy ab. `tools/deploy.sh` bleibt für den Deploy von Hand.
+Ohne Secret oder `NEXT_PUBLIC_API_URL` laufen Tests, Lint und Build als
+Prüfung, der Lauf endet grün mit einer Warnung, was fehlt — kein Deploy. `tools/deploy.sh` bleibt für den Deploy von Hand.
 
 ### Version
 

@@ -8,7 +8,9 @@
 #   variable NEXT_PUBLIC_API_URL       base URL of the functions
 #   variable FSA_ALLOWED_ORIGINS       as in functions/.env
 #   variable FSA_SNAPSHOT_USERS        as in functions/.env
-# Without the secret the job stops after the tests instead of failing.
+# Without the secret or the API URL it still runs tests, lint and build as a
+# check, and ends green with a warning naming what is missing - a merge on
+# an unconfigured repository is not a failure.
 name: Deploy
 
 on:
@@ -25,16 +27,18 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HAS_CREDENTIALS: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+      HAS_API_URL: ${{ vars.NEXT_PUBLIC_API_URL != '' }}
+      READY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' && vars.NEXT_PUBLIC_API_URL != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           # The functions run on Python 3.14 (gen2); firebase-tools reads the
           # runtime off the venv, so the venv has to be that version.
           python-version: "3.14"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -52,23 +56,29 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
         run: |
-          test -n "$NEXT_PUBLIC_API_URL" || { echo "Variable NEXT_PUBLIC_API_URL fehlt"; exit 1; }
+          # Without the variable the build points at localhost: fine as a
+          # check that it compiles, never deployed (READY below).
           npm ci --prefix frontend
           npm run lint --prefix frontend
           npm run build --prefix frontend
 
-      - name: Stop without credentials
-        if: env.HAS_CREDENTIALS != 'true'
-        run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt - Build ok, aber kein Deploy."
+      - name: Not configured - no deploy
+        if: env.READY != 'true'
+        run: |
+          missing=""
+          [ "$HAS_CREDENTIALS" = "true" ] || missing="$missing Secret FIREBASE_SERVICE_ACCOUNT,"
+          [ "$HAS_API_URL" = "true" ] || missing="$missing Variable NEXT_PUBLIC_API_URL,"
+          echo "::warning::Tests und Build ok, kein Deploy. Es fehlt:${missing%,} (Settings -> Secrets and variables -> Actions, siehe README)."
+          echo "Kein Deploy - es fehlt:${missing%,}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Functions config
-        if: env.HAS_CREDENTIALS == 'true'
+        if: env.READY == 'true'
         run: |
           printf 'FSA_ALLOWED_ORIGINS=%s\nFSA_SNAPSHOT_USERS=%s\n' \
             "${{ vars.FSA_ALLOWED_ORIGINS }}" "${{ vars.FSA_SNAPSHOT_USERS }}" > functions/.env
 
       - name: Deploy
-        if: env.HAS_CREDENTIALS == 'true'
+        if: env.READY == 'true'
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |

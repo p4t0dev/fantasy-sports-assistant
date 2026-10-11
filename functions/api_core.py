@@ -12,65 +12,93 @@ import usage
 import forecast
 import gameday
 
-def fetch_espn_college_stats(player_name):
-    """
-    Fetches college stats from ESPN's open API for a given player name.
-    Returns a dict with 'YDS', 'TD', 'REC', 'TACKLES', 'SACKS', 'INT', etc.
-    """
+class EspnUnavailable(Exception):
+    """ESPN did not answer - a gap to retry, not a verdict on the player."""
+
+
+def _espn_get(url):
+    """GET an ESPN endpoint: the response, None for a 404, EspnUnavailable otherwise."""
     try:
-        # Search for the player
-        query = urllib.parse.quote(player_name)
-        search_url = f"https://site.web.api.espn.com/apis/search/v2?region=us&lang=en&query={query}&limit=3&page=1&type=player"
-        res = requests.get(search_url, timeout=5).json()
-        
-        if not res.get("results") or not res["results"]:
-            return None
-            
-        # Find the first valid football player
-        espn_id = None
-        for result in res["results"]:
-            if result.get("type") == "player" and result.get("contents"):
-                for content in result["contents"]:
-                    if content.get("sport") == "football":
-                        # Could be "NFL" or "College Football" but ESPN stores college stats for both usually
-                        # The ID is at the end of the web URL, e.g. https://www.espn.com/nfl/player/_/id/4605951/cj-daniels
-                        web_url = content.get("link", {}).get("web", "")
-                        if "/id/" in web_url:
-                            parts = web_url.split("/id/")
-                            espn_id = parts[1].split("/")[0]
-                            break
-                if espn_id:
-                    break
-                    
-        if not espn_id:
-            return None
-            
-        # Fetch their stats
-        stats_url = f"https://site.web.api.espn.com/apis/common/v3/sports/football/college-football/athletes/{espn_id}/stats"
-        stats_res = requests.get(stats_url, timeout=5)
-        if stats_res.status_code != 200:
-            return None
-            
-        stats_data = stats_res.json()
-        categories = stats_data.get("categories", [])
-        
-        parsed_stats = {}
-        for cat in categories:
-            cat_name = cat.get("name")
-            labels = cat.get("labels", [])
-            totals = cat.get("totals", [])
-            if len(labels) == len(totals):
-                for label, total in zip(labels, totals):
-                    # Clean commas from totals (e.g. "2,991" -> "2991")
-                    val = total.replace(",", "")
-                    try:
-                        parsed_stats[f"{cat_name.upper()}_{label}"] = float(val)
-                    except ValueError:
-                        pass
-        return parsed_stats if parsed_stats else None
-    except Exception as e:
-        print(f"Error fetching ESPN stats for {player_name}: {e}")
+        res = requests.get(url, timeout=5)
+    except requests.RequestException as e:
+        raise EspnUnavailable(str(e)) from e
+    if res.status_code == 404:
         return None
+    if res.status_code != 200:
+        raise EspnUnavailable(f"HTTP {res.status_code}")
+    try:
+        return res.json()
+    except ValueError as e:
+        raise EspnUnavailable("invalid JSON") from e
+
+
+def fetch_espn_college_stats(player_name):
+    """College stats from ESPN's open API, keyed like 'RECEIVING_YDS'.
+
+    Returns None when ESPN has no college record for the player, and raises
+    EspnUnavailable when ESPN could not be asked. The two used to be the same
+    None, and the caller stored both as "not found": a refresh with ESPN
+    unreachable marked a whole batch of rookies as having no college record,
+    for good.
+    """
+    query = urllib.parse.quote(player_name)
+    res = _espn_get("https://site.web.api.espn.com/apis/search/v2?region=us&lang=en"
+                    f"&query={query}&limit=3&page=1&type=player")
+    if not res or not res.get("results"):
+        return None
+
+    # The first football player. NFL and college players share an ESPN id,
+    # which sits at the end of the web URL (.../player/_/id/4605951/...).
+    espn_id = None
+    for result in res["results"]:
+        if result.get("type") != "player":
+            continue
+        for content in result.get("contents") or []:
+            web_url = (content.get("link") or {}).get("web", "")
+            if content.get("sport") == "football" and "/id/" in web_url:
+                espn_id = web_url.split("/id/")[1].split("/")[0]
+                break
+        if espn_id:
+            break
+    if not espn_id:
+        return None
+
+    stats_data = _espn_get("https://site.web.api.espn.com/apis/common/v3/sports/football/"
+                           f"college-football/athletes/{espn_id}/stats")
+    if not stats_data:
+        return None
+    parsed = {}
+    for cat in stats_data.get("categories", []):
+        labels, totals = cat.get("labels", []), cat.get("totals", [])
+        if len(labels) != len(totals):
+            continue
+        for label, total in zip(labels, totals):
+            try:
+                parsed[f"{cat.get('name', '').upper()}_{label}"] = float(total.replace(",", ""))
+            except ValueError:
+                pass
+    return parsed or None
+
+
+# A college profile ESPN did not have is looked for again after this long:
+# a rookie's college page can appear after he is first searched.
+COLLEGE_RECHECK_DAYS = 30
+# Consecutive ESPN failures after which a refresh stops asking: ESPN is down,
+# and every further request is a five-second timeout.
+ESPN_MAX_FAILURES = 3
+
+
+def _college_due(entry, now):
+    """Whether a stored college entry should be looked up again."""
+    if entry is None:
+        return True
+    if not entry.get("_not_found"):
+        return False
+    # Misses from before the check date existed include every network error
+    # ever stored as one, so they are all due.
+    checked = entry.get("_checked")
+    return not checked or now - checked > COLLEGE_RECHECK_DAYS * 86400
+
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
@@ -2816,21 +2844,35 @@ def update_sleeper_data_api(sport="nfl", college_batch=25):
     fetched = 0
     if sport == "nfl" and players:
         college_data = load_college_stats() or {}
+        now = time.time()
         pending = []
         for pid, p in players.items():
-            if str(pid) in college_data:
+            if not _college_due(college_data.get(str(pid)), now):
                 continue
             if p.get("years_exp") == 0 and p.get("status") == "Active":
                 pos = p.get("position")
                 rank = p.get("search_rank") or 99999
                 if (pos in ['QB', 'RB', 'WR', 'TE'] and rank <= 800) or pos in IDP_POSITIONS:
                     pending.append((pid, p))
+        # Never-searched players first, re-checks after them.
+        pending.sort(key=lambda item: str(item[0]) in college_data)
 
+        failures = 0
         for pid, p in pending[:college_batch]:
             name = f"{p.get('first_name')} {p.get('last_name')}"
-            c_stats = fetch_espn_college_stats(name)
-            # Remember misses too, so we stop retrying them every run.
-            college_data[str(pid)] = c_stats or {"_not_found": True}
+            try:
+                c_stats = fetch_espn_college_stats(name)
+            except EspnUnavailable as e:
+                failures += 1
+                print(f"ESPN unavailable for {name}: {e}")
+                if failures >= ESPN_MAX_FAILURES:
+                    errors.append("ESPN nicht erreichbar")
+                    break
+                continue  # nothing stored: asked again next run
+            failures = 0
+            # A real miss is remembered, with the date, so it is not asked
+            # every run but is asked again in a month.
+            college_data[str(pid)] = c_stats or {"_not_found": True, "_checked": int(now)}
             fetched += 1
 
         if fetched:
