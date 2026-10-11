@@ -105,6 +105,26 @@ export function MatchupBadge({ player }: { player: Player }) {
       </span>
     );
   }
+  if (player.games_week != null) {
+    // NBA: one game per starter counts, so the number of chances is what
+    // matters - the opponents are in the tooltip.
+    return (
+      <span className="flex items-center gap-1">
+        <span title={player.opp ? `vs ${player.opp.split("/").join(", ")}` : undefined}
+              className="text-[10px] text-gray-500 font-medium">
+          {player.games_week} {player.games_week === 1 ? "Spiel" : "Spiele"}
+        </span>
+        {player.lock && !player.lock.final && player.lock.lock && (
+          <span
+            title={`Letztes Spiel ${player.lock.score} Pkt — mehr als der Rest der Woche erwarten lässt (${player.lock.rest}). Einlocken, falls nicht schon geschehen.`}
+            className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border bg-emerald-900/40 text-emerald-300 border-emerald-700"
+          >
+            Einlocken
+          </span>
+        )}
+      </span>
+    );
+  }
   if (!player.opp) return null;
   return <span className="text-[10px] text-gray-500 font-medium">vs {player.opp}</span>;
 }

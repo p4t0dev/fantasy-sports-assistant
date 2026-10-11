@@ -50,12 +50,22 @@ export type Player = {
   usage?: Usage | null;
   /** Forecast points over this week and the following ones (see `WEEK_HORIZON`). */
   pts_horizon?: number | null;
-  /** The horizon as a season: per week × 17. On the waiver board this is `pts`. */
+  /** The horizon as a season: per week × `pace_weeks`. On the waiver board this is `pts`. */
   pts_pace?: number | null;
+  /** Weeks in a season (NFL 17, NBA 25): `pts_pace` / this is per week. */
+  pace_weeks?: number | null;
+  /** Games in a season (NFL 17, NBA 82): `pts_season` / this is per game. */
+  season_games?: number | null;
+  /** NBA: games still to play this week. */
+  games_week?: number | null;
+  /** NBA Lock-In: the call on the game he just played. */
+  lock?: LockAdvice | null;
+  /** One sigma of his week around `pts_week`, where the sport sets it. */
+  spread?: number | null;
   /** The season projection, where `pts` holds the pace instead (waivers). */
   pts_season?: number | null;
   /** The forecast week by week; opp null means bye. */
-  horizon?: { week: number; opp: string | null; pts: number }[] | null;
+  horizon?: { week: number; opp: string | null; pts: number; games?: number }[] | null;
   /** This week's opponent; null on bye or off-season. */
   opp?: string | null;
   bye?: boolean;
@@ -107,6 +117,28 @@ export type Usage = {
   pts_by_week: Record<string, number>;
   /** Points each game's usage was worth on average (targets, carries, snaps). */
   xfp_by_week?: Record<string, number | null>;
+};
+
+/** NBA Lock-In: lock the game he just played, or play on for the rest. */
+export type LockAdvice = {
+  lock: boolean;
+  score: number;
+  /** What his remaining games are worth; null when none is left. */
+  rest: number | null;
+  /** No game left: the score stands whatever happens. */
+  final: boolean;
+  date?: string;
+};
+
+/** A lock-in call for a starter (lineup page and overview). */
+export type LockCall = {
+  slot: string;
+  id: string;
+  name: string;
+  lock: boolean;
+  score: number;
+  rest: number;
+  date?: string;
 };
 
 export type ForecastNote = {
@@ -170,6 +202,33 @@ export type ForecastModel = {
     wind_strong: number; wind_severe: number; rain_heavy: number;
     effect: Record<string, [number, number, number]>;
   };
+  /** The NBA week (functions/nba.py), fitted by tools/backtest_nba.py. */
+  nba?: NbaModel;
+};
+
+export type NbaModel = {
+  params: { a: number; b: number; b2b: number; sigma0: number; sigma1: number; dnp: number };
+  backtest: {
+    season: string;
+    split_week: number;
+    game: {
+      games_test: number;
+      rmse_sleeper: number;
+      rmse_model: number;
+      calibration: { a: number; b: number; rmse: number; kept: boolean };
+      b2b: { factor: number; rmse: number; kept: boolean };
+      form: { weight: number; rmse: number; gain: number; kept: boolean };
+    };
+    week: {
+      by_games: Record<string, { weeks: number; value: number; locked: number; no_lock: number }>;
+      pairwise: { value: number; sum: number; per_game: number };
+      pairs: number;
+    };
+  } | null;
+  season_weeks: number;
+  next_game_dnp: Record<string, number>;
+  out_later_dnp: number;
+  thresholds: { bench: number; bench_urgent: number; favorite: number; close_call: number };
 };
 
 export type Faab = { min: number; max: number; tier: string; budget_left: number };
@@ -234,12 +293,15 @@ export type LineupChange = {
 };
 
 export type LineupIssue = {
-  kind: "empty" | "bye" | "out" | "doubtful" | "questionable" | "bench";
+  kind: "empty" | "bye" | "out" | "doubtful" | "questionable" | "bench" | "lock";
   /** 3 scores nothing unless fixed, 2 likely costs points, 1 worth a look. */
   severity: number;
   slot: string | null;
   player: Player | null;
   gain?: number;
+  /** "lock": the score to lock, and what the rest of his week is worth. */
+  score?: number;
+  rest?: number;
 };
 
 export type OverviewLeague = {
@@ -253,6 +315,7 @@ export type OverviewLeague = {
   changes?: LineupChange[];
   forecast_notes?: ForecastNote[];
   close_calls?: CloseCall[];
+  lock_calls?: LockCall[];
   matchup?: MatchupStance | null;
   current_total?: number;
   total?: number;

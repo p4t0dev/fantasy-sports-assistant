@@ -6,7 +6,7 @@ import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import type { LineupIssue, Overview, OverviewLeague, Player } from "@/lib/types";
 import { InjuryBadge, MatchupBadge, PosBadge, startPts } from "@/components/PlayerBadges";
-import { CloseCalls, ForecastDelta, ForecastDetail, MatchupLine } from "@/components/ForecastDetail";
+import { CloseCalls, ForecastDelta, ForecastDetail, LockCalls, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
 import WaiverOverview, { waiverSummary } from "@/components/WaiverOverview";
 import { Section, SectionNav, useSections } from "@/components/Section";
@@ -16,8 +16,9 @@ import {
   getSearchServerSnapshot,
 } from "@/lib/leagueCache";
 
-// The snapshot is rebuilt at 06:00, 12:00 and 18:00 Berlin time. Anything older
-// than the longest gap between two runs means a run was missed.
+// The snapshot is rebuilt at 06:00, 12:00 and 18:00 Berlin time (NBA: 08:00,
+// 12:00, 18:00, 23:00). Anything older than the longest gap between two runs
+// means a run was missed.
 const STALE_AFTER_HOURS = 13;
 
 const SEVERITY_TONE: Record<number, { border: string; text: string; dot: string }> = {
@@ -59,6 +60,14 @@ function issueText(issue: LineupIssue): React.ReactNode {
         <>
           <strong className="text-white">{name}</strong> ({slot}) ist angeschlagen{" "}
           <InjuryBadge injury={issue.player?.injury} />
+        </>
+      );
+    case "lock":
+      return (
+        <>
+          <strong className="text-white">{name}</strong> ({slot}) einlocken:{" "}
+          <strong className="text-emerald-300">{issue.score}</strong> Pkt im letzten Spiel, der Rest
+          der Woche ist {issue.rest} wert
         </>
       );
     case "bench":
@@ -153,6 +162,7 @@ function LeagueCard({
       )}
 
       <MatchupLine stance={league.matchup} />
+      <LockCalls calls={(league.lock_calls ?? []).filter((c) => !c.lock)} />
       <CloseCalls calls={league.close_calls} />
 
       {starterNotes.length > 0 && (

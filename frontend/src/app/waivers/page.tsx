@@ -62,7 +62,7 @@ type WaiverData = {
   positions: string[];
   faab: { budget: number | null; left: number | null; waiver_type: number | null };
   /** The weeks `pts` is forecast over; null off-season (season projection). */
-  horizon?: { weeks: number[]; weights?: number[] | null } | null;
+  horizon?: { weeks: number[]; weights?: number[] | null; pace_weeks?: number } | null;
   /** The waiver strategy for this league's format. */
   profile?: { key: "dynasty" | "keeper" | "redraft" | "chopped"; label: string } | null;
 };
@@ -350,8 +350,11 @@ function WaiversContent() {
           {data?.horizon?.weeks?.length ? (
             <p className="text-xs text-gray-500 mt-1">
               Punkte auf dieser Seite: unsere Prognose, Ø pro Woche über W
-              {data.horizon.weeks[0]}–{data.horizon.weeks[data.horizon.weeks.length - 1]} (Bye
-              zählt 0) — dieselbe Prognose wie in der Aufstellung.{" "}
+              {data.horizon.weeks[0]}–{data.horizon.weeks[data.horizon.weeks.length - 1]}{" "}
+              {sport === "nba"
+                ? "(Lock-In: ein Spiel pro Woche zählt, mehr Spiele sind mehr Chancen darauf)"
+                : "(Bye zählt 0)"}{" "}
+              — dieselbe Prognose wie in der Aufstellung.{" "}
               <Link href="/prognose" className="text-blue-400 hover:text-blue-300">
                 So entsteht sie →
               </Link>
@@ -535,10 +538,11 @@ function WaiversContent() {
           title="Mein Team"
           accent="bg-purple-500"
           meta={
-            // In season the board counts in forecast pace (per week x 17);
-            // the lineup total is shown per week, like everything else here.
+            // In season the board counts in forecast pace (per week x a
+            // season's weeks); the lineup total is shown per week, like
+            // everything else here.
             data?.horizon
-              ? `Startaufstellung ${(lineup.total / 17).toFixed(1)} Pkt/Woche`
+              ? `Startaufstellung ${(lineup.total / (data.horizon.pace_weeks ?? 17)).toFixed(1)} Pkt/Woche`
               : `Startaufstellung ${lineup.total} Punkte projiziert`
           }
           summary={rosterDepth.map((d) => `${d.pos} ${d.count}/${d.needed}`).join(" · ")}

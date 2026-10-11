@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { ForecastModel, ForecastParams } from "@/lib/types";
+import type { ForecastModel, ForecastParams, NbaModel } from "@/lib/types";
 import { PosBadge } from "@/components/PlayerBadges";
 
 // The one place the forecast is explained end to end. Weights, backtest
@@ -31,6 +31,93 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <h2 className="text-lg font-bold text-white">{title}</h2>
       <div className="text-sm text-gray-300 leading-relaxed space-y-3">{children}</div>
     </section>
+  );
+}
+
+const DNP_LABEL: Record<string, string> = { "1": "Questionable/DTD", "2": "Doubtful", "3": "Out" };
+
+/** The NBA week: Lock-In scoring and its optimal stopping value. */
+function NbaSection({ nba }: { nba: NbaModel }) {
+  const p = nba.params;
+  const bt = nba.backtest;
+  const fmt = (x: number) => x.toFixed(2);
+  return (
+    <Section title="NBA: ein Spiel pro Woche (Lock-In)">
+      <p>
+        Sleeper-NBA-Ligen laufen im <strong className="text-white">Lock-In-Modus</strong>: Eine
+        Woche geht von Montag bis Sonntag, und jeder Starter zählt mit genau einem seiner Spiele.
+        Nach einem Spiel kann man es einlocken, bis sein nächstes beginnt. Wer nie eingelockt
+        wird, zählt mit dem letzten Spiel der Woche, auch wenn das 0 ist. Eine Woche ist deshalb
+        nicht &bdquo;Spiele × Punkte pro Spiel&ldquo;: Mehr Spiele sind mehr Chancen auf ein gutes
+        Spiel, aber nicht mehr Punkte.
+      </p>
+      <Formula>
+        {`μ  = ${fmt(p.a)} + ${fmt(p.b)} × Sleeper pro Spiel        (Kalibrierung)
+σ  = ${p.sigma0.toFixed(1)} × Liga-Skala + ${fmt(p.sigma1)} × μ          (Streuung eines Spiels)
+
+V_letztes = (1 − q) × μ_letztes
+V_i       = (1 − q) × E[max(X_i, V_i+1)] + q × V_i+1
+
+Einlocken, wenn Punkte im Spiel i ≥ V_i+1  (was der Rest der Woche wert ist)`}
+      </Formula>
+      <p>
+        q ist das Risiko, dass er ein Spiel verpasst: ohne Meldung {pct(p.dnp)}, im nächsten Spiel{" "}
+        {Object.entries(nba.next_game_dnp)
+          .map(([k, v]) => `${DNP_LABEL[k] ?? k} ${pct(v)}`)
+          .join(", ")}
+        ; nach einem Out die übrigen Spiele der Woche {pct(nba.out_later_dnp)}. Für die
+        Saisonskala auf der Waiver-Seite zählt die Woche × {nba.season_weeks}.
+      </p>
+      {bt && (
+        <>
+          <p>
+            Gefittet auf der Saison {bt.season} bis Woche {bt.split_week - 1}, geprüft auf dem
+            Rest ({bt.game.games_test.toLocaleString("de-DE")} Spiele). Fehler pro Spiel (RMSE):
+            Sleeper {bt.game.rmse_sleeper}, mit Kalibrierung {bt.game.rmse_model}.{" "}
+            Back-to-back-Abschlag (×{bt.game.b2b.factor}):{" "}
+            {bt.game.b2b.kept ? "übernommen" : "schlägt Sleeper nicht, bleibt draußen"}. Form der
+            letzten Spiele: {bt.game.form.gain > 0 ? "+" : ""}
+            {bt.game.form.gain} Punkte RMSE —{" "}
+            {bt.game.form.kept ? "übernommen" : "zu wenig, bleibt draußen"}.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-gray-500">
+                <tr>
+                  <th className="text-left font-medium py-1">Spiele in der Woche</th>
+                  <th className="text-right font-medium">Prognose</th>
+                  <th className="text-right font-medium">real eingelockt</th>
+                  <th className="text-right font-medium">ohne Einlocken</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(bt.week.by_games).map(([n, r]) => (
+                  <tr key={n} className="border-t border-gray-800">
+                    <td className="py-1">{n === "4" ? "4+" : n}</td>
+                    <td className="text-right text-white">{r.value}</td>
+                    <td className="text-right">{r.locked}</td>
+                    <td className="text-right text-gray-500">{r.no_lock}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-500">
+            Starter mit mindestens 15 Punkten pro Spiel in der Testhälfte. &bdquo;Real eingelockt&ldquo;
+            ist, was die Einlock-Regel mit den echten Ergebnissen geholt hätte.
+          </p>
+        </>
+      )}
+      <p>
+        In der Aufstellung zeigt die App nach jedem Spiel, wen du einlocken solltest. Ein Lock
+        geht nur, wenn er im Spiel in der Startelf stand, und ob du schon eingelockt hast, verrät
+        Sleeper nicht. Knappe Entscheidungen sind in der NBA unter {nba.thresholds.close_call}{" "}
+        Punkten, Favorit oder Außenseiter ab {nba.thresholds.favorite} Punkten Abstand.
+      </p>
+      <p className="text-xs text-gray-500">
+        Neu fitten: <code className="text-blue-300">python3 tools/backtest_nba.py --season 2025 --write</code>
+      </p>
+    </Section>
   );
 }
 
@@ -396,6 +483,8 @@ A         = Verfügbarkeit`}</Formula>
           </li>
         </ol>
       </Section>
+
+      {model?.nba && <NbaSection nba={model.nba} />}
 
       <Section title="Was (noch) nicht drin ist">
         <ul className="list-disc list-inside space-y-1">
