@@ -168,7 +168,10 @@ function LeagueCard({
       {starterNotes.length > 0 && (
         <details className="text-xs">
           <summary className="cursor-pointer list-none select-none text-gray-400 hover:text-gray-200">
-            ▸ {starterNotes.length} Starter, bei denen unsere Prognose von Sleeper abweicht
+            ▸ {starterNotes.length} Starter,{" "}
+            {starterNotes[0].base_label === "ohne Ausfall"
+              ? "deren Prognose ein Ausfallrisiko enthält"
+              : "bei denen unsere Prognose von Sleeper abweicht"}
           </summary>
           <ul className="mt-2 space-y-2">
             {starterNotes.map((n) => (
@@ -177,7 +180,7 @@ function LeagueCard({
                   <PosBadge pos={n.pos} />
                   {n.name}
                   <span className="ml-auto text-gray-500">
-                    Sleeper {n.pts_week_base.toFixed(1)} →{" "}
+                    {n.base_label ?? "Sleeper"} {n.pts_week_base.toFixed(1)} →{" "}
                     <span className="text-white font-medium">{n.pts_week.toFixed(1)}</span>
                   </span>
                 </div>

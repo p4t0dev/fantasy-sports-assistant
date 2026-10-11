@@ -20,9 +20,10 @@ remaining games, one game at a time from the back:
 X_i ~ N(mu_i, sigma_i) is one game, q the chance he does not play it. V_i+1 is
 also the threshold for game i: a score at or above it is worth locking.
 
-mu is Sleeper's projection for that game, calibrated on last season, with a
-discount on the second night of a back-to-back. Whatever the backtest finds
-not to beat Sleeper's own number stays out (see PARAMS).
+mu is Sleeper's projection for that game, calibrated on last season. A
+discount for the second night of a back-to-back is built in but fitted out:
+on the 2025 season it did not beat Sleeper's own number (b2b = 1.0, see
+data/forecast_params_nba.json), and neither did recent form.
 """
 
 import datetime

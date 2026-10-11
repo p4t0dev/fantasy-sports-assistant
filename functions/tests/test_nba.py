@@ -119,21 +119,22 @@ class WeekFieldsTest(unittest.TestCase):
 
     def test_a_big_game_is_worth_locking(self):
         f = api_core._nba_week_fields("1", {"team": "BOS"}, None,
-                                      self.weekly("2026-10-27", {"1": [("2026-10-26", 45.0)]}))
+                                      self.weekly("2026-10-27", {"1": [("2026-10-26", 45.0)]}), starting=True)
         self.assertTrue(f["lock"]["lock"])
         self.assertEqual(f["pts_week"], 45.0)
         self.assertIn("jetzt einlocken", " ".join(f["forecast"]["explain"]))
 
     def test_a_poor_game_is_played_on(self):
         f = api_core._nba_week_fields("1", {"team": "BOS"}, None,
-                                      self.weekly("2026-10-27", {"1": [("2026-10-26", 12.0)]}))
+                                      self.weekly("2026-10-27", {"1": [("2026-10-26", 12.0)]}), starting=True)
         self.assertFalse(f["lock"]["lock"])
         self.assertEqual(f["pts_week"], 30.0)
 
     def test_after_his_last_game_the_score_stands(self):
         f = api_core._nba_week_fields(
             "1", {"team": "BOS"}, None,
-            self.weekly("2026-10-28", {"1": [("2026-10-26", 12.0), ("2026-10-27", 20.0)]}))
+            self.weekly("2026-10-28", {"1": [("2026-10-26", 12.0), ("2026-10-27", 20.0)]}),
+            starting=True)
         self.assertTrue(f["locked"])
         self.assertEqual(f["pts_week"], 20.0)
         self.assertTrue(f["lock"]["final"])
@@ -145,13 +146,48 @@ class WeekFieldsTest(unittest.TestCase):
 
     def test_lock_call_becomes_an_issue_for_a_starter(self):
         f = api_core._nba_week_fields("1", {"team": "BOS"}, None,
-                                      self.weekly("2026-10-27", {"1": [("2026-10-26", 45.0)]}))
+                                      self.weekly("2026-10-27", {"1": [("2026-10-26", 45.0)]}), starting=True)
         player = {"id": "1", "name": "A", "elig": {"PG"}, **f}
         current = [{"slot": "PG", "player": player}]
         issues = api_core.lineup_issues(current, 0.0, api_core.LINEUP_THRESHOLDS["nba"])
         self.assertEqual([i["kind"] for i in issues], ["lock"])
         self.assertEqual(api_core.lock_calls(current)[0]["name"], "A")
 
+
+    def test_a_bench_game_cannot_be_locked_and_does_not_count(self):
+        # 45 points from the bench last night: moving him up buys his last
+        # game of the week, not that night.
+        played = {"1": [("2026-10-26", 45.0)]}
+        bench = api_core._nba_week_fields("1", {"team": "BOS"}, None,
+                                          self.weekly("2026-10-27", played))
+        starter = api_core._nba_week_fields("1", {"team": "BOS"}, None,
+                                            self.weekly("2026-10-27", played), starting=True)
+        self.assertIsNone(bench["lock"])
+        self.assertEqual(bench["pts_week"], 30.0)
+        self.assertEqual(starter["pts_week"], 45.0)
+        self.assertEqual(bench["horizon"], starter["horizon"])
+
+    def test_a_bench_week_that_is_over_counts_nothing(self):
+        f = api_core._nba_week_fields(
+            "1", {"team": "BOS"}, None,
+            self.weekly("2026-10-28", {"1": [("2026-10-26", 12.0), ("2026-10-27", 40.0)]}))
+        self.assertTrue(f["locked"])
+        self.assertEqual(f["pts_week"], 0.0)
+        self.assertIsNone(f["lock"])
+        self.assertIn("zählen nicht", " ".join(f["forecast"]["explain"]))
+
+    def test_optimizer_does_not_start_a_bench_player_for_last_night(self):
+        weekly = self.weekly("2026-10-27", {"1": [("2026-10-26", 45.0)],
+                                            "2": [("2026-10-26", 10.0)]})
+        weekly["games"][2]["2"] = [("2026-10-27", "MIA", 31.0)]
+        roster = {"players": ["1", "2"], "starters": ["2"]}
+        players = {"1": {"first_name": "Bench", "last_name": "Star", "position": "PG",
+                         "fantasy_positions": ["PG"], "team": "BOS", "sport": "nba"},
+                   "2": {"first_name": "Starter", "last_name": "Guy", "position": "PG",
+                         "fantasy_positions": ["PG"], "team": "BOS", "sport": "nba"}}
+        inputs = (players, {}, {}, {}, {}, weekly)
+        result = api_core._lineup_analysis(roster, ["PG", "BN"], inputs)
+        self.assertEqual(result["changes"], [])
 
 class YouthTest(unittest.TestCase):
 

@@ -147,6 +147,8 @@ export type ForecastNote = {
   starting: boolean;
   pts_week: number;
   pts_week_base: number;
+  /** What `pts_week_base` is: Sleeper's number (NFL) or the week without injury risk (NBA). */
+  base_label?: string;
   explain: string[];
 };
 
