@@ -68,7 +68,7 @@ export default function Dashboard() {
   // exists for configured usernames, and a missing one is not an error here.
   const overviewUser = fetched ? username : cached?.username;
   useEffect(() => {
-    if (!overviewUser || sport !== "nfl") return;
+    if (!overviewUser) return;
     let active = true;
     apiGet<Overview>("get_overview", { username: overviewUser, sport })
       .then((result) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { CloseCall, MatchupStance, Player } from "@/lib/types";
+import type { CloseCall, LockCall, MatchupStance, Player } from "@/lib/types";
 
 // Every forecast on the site can be taken apart right where it is shown.
 // A number that says "13.2" and a Sleeper app that says "9.0" is a question
@@ -112,14 +112,14 @@ export function ForecastDetail({ player }: { player: Player }) {
 /** The number the waiver board ranks by, as a reader should see it.
  *
  *  In season `pts` there is the forecast pace over the horizon (per week ×
- *  17, so it sits on the scale of a season projection). Shown as a season it
+ *  `pace_weeks`, so it sits on the scale of a season projection). Shown as a season it
  *  read like a projection nobody made; shown per week it is the same number
  *  as on the lineup page. Off-season it is the season projection. */
 export function waiverPts(player: Player): { value: string; unit: string } {
   const h = player.horizon;
   if (player.pts_season != null && h?.length) {
     return {
-      value: ((player.pts ?? 0) / 17).toFixed(1),
+      value: ((player.pts ?? 0) / (player.pace_weeks ?? 17)).toFixed(1),
       unit: `Ø W${h[0].week}–${h[h.length - 1].week}`,
     };
   }
@@ -146,13 +146,17 @@ export function HorizonDetail({ player }: { player: Player }) {
               <div className={w.opp ? "text-white font-medium" : "text-red-300"}>
                 {w.opp ? w.pts.toFixed(1) : "Bye"}
               </div>
-              <div className="text-gray-500 truncate">{w.opp ? `vs ${w.opp}` : ""}</div>
+              <div className="text-gray-500 truncate" title={w.opp ?? undefined}>
+                {w.games != null ? `${w.games} ${w.games === 1 ? "Spiel" : "Spiele"}` : w.opp ? `vs ${w.opp}` : ""}
+              </div>
             </div>
           ))}
         </div>
         {player.pts_season != null && (
           <div className="text-gray-500">
-            Zum Vergleich Sleepers Saisonprognose: {(player.pts_season / 17).toFixed(1)} pro Woche
+            Zum Vergleich Sleepers Saisonprognose:{" "}
+            {(player.pts_season / (player.season_games ?? 17)).toFixed(1)}{" "}
+            {player.games_week != null ? "pro Spiel" : "pro Woche"}
           </div>
         )}
         {player.forecast && (
@@ -206,6 +210,25 @@ export function MatchupLine({
         <span className={tone}>{STANCE_TEXT[stance.kind]}</span>
       )}
     </p>
+  );
+}
+
+/** NBA Lock-In: which starter's last game to lock, and who plays on. */
+export function LockCalls({ calls }: { calls?: LockCall[] }) {
+  if (!calls?.length) return null;
+  return (
+    <ul className="space-y-1 text-xs">
+      {calls.map((c) => (
+        <li key={c.id} className={c.lock ? "text-emerald-300" : "text-gray-400"}>
+          {c.lock ? "Einlocken" : "Weiterspielen"}: <strong className="text-white">{c.name}</strong>{" "}
+          — letztes Spiel {c.score} Pkt {c.lock ? "≥" : "<"} {c.rest} Restwert der Woche
+        </li>
+      ))}
+      <li className="text-[10px] text-gray-500">
+        Pro Starter zählt ein Spiel pro Woche. Einlocken geht bis zum Beginn seines nächsten Spiels
+        und nur, wenn er im Spiel in der Startelf stand — falls schon eingelockt, ignorieren.
+      </li>
+    </ul>
   );
 }
 

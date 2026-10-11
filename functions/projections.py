@@ -161,3 +161,35 @@ def fetch_week_stats(sport, season, week):
                       and "rank" not in k and v},
         }
     return out
+
+
+def fetch_week_games(sport, season, week, base=BASE_URL):
+    """One week, one row per player and game: {pid: [{date, team, opp, stats}]}.
+
+    The NBA ships a row per game, not per week - a player with four games
+    has four rows. Keyed by player alone, as `fetch_week_projections` does,
+    three of them were overwritten by the fourth. With `base=STATS_URL` the
+    rows are box scores; a game he sat out is left out. Returns None when
+    the fetch failed.
+    """
+    rows = _fetch_rows(sport, f"{season}/{week}", base=base)
+    if rows is None:
+        return None
+    out = {}
+    for row in rows:
+        pid = row.get("player_id")
+        p_stats = row.get("stats") or {}
+        if pid is None or not row.get("date"):
+            continue
+        kept = {k: v for k, v in p_stats.items()
+                if not k.startswith(_DROP_PREFIXES) and not k.startswith("pts_")
+                and "rank" not in k and not k.startswith(("q1_", "q2_", "q3_", "q4_", "h1_", "h2_"))
+                and v}
+        if not kept or (base == STATS_URL and not (kept.get("gp") or kept.get("sp"))):
+            continue
+        out.setdefault(str(pid), []).append({
+            "date": row["date"], "team": row.get("team"), "opp": row.get("opponent"),
+            "stats": kept})
+    for games in out.values():
+        games.sort(key=lambda g: g["date"])
+    return out

@@ -207,7 +207,7 @@ def update_data(req: https_fn.Request) -> https_fn.Response:
 
     sport = req.args.get("sport", "nfl")
     result = api_core.update_sleeper_data_api(sport)
-    if result.get("status") == "success" and sport == "nfl":
+    if result.get("status") == "success":
         # The button is how a manager asks for fresh numbers now; the overview
         # should not keep showing the old ones until the next scheduled run.
         notes = [api_core.build_overview_snapshot(u, sport)["message"] for u in SNAPSHOT_USERS]
@@ -306,26 +306,24 @@ def analyze_draft(req: https_fn.Request) -> https_fn.Response:
 @scheduler_fn.on_schedule(schedule="0 6,12,18 * * *", timezone=scheduler_fn.Timezone("Europe/Berlin"),
                           memory=512, timeout_sec=540, secrets=["ODDS_API_KEY"])
 def refresh_data(event: scheduler_fn.ScheduledEvent) -> None:
-    """Snapshot refresh, three times a day.
-
-    NFL data and every configured user's overview on each run. The NBA has no
-    overview and no weekly model, so once a day in the morning is enough.
-    """
+    """NFL snapshot refresh, three times a day: data and every configured
+    user's overview on each run."""
     result = api_core.update_sleeper_data_api("nfl")
     print(f"[nfl] {result.get('message')}")
     for username in SNAPSHOT_USERS:
         print(f"[overview] {api_core.build_overview_snapshot(username, 'nfl')['message']}")
 
-    if _berlin_hour(event) < 9:
-        result = api_core.update_sleeper_data_api("nba")
-        print(f"[nba] {result.get('message')}")
 
-
-def _berlin_hour(event):
-    try:
-        from zoneinfo import ZoneInfo
-        from datetime import datetime
-        when = getattr(event, "schedule_time", None) or datetime.now(ZoneInfo("UTC"))
-        return when.astimezone(ZoneInfo("Europe/Berlin")).hour
-    except Exception:
-        return 6  # when in doubt, refresh
+# NBA games end between 04:00 and 07:30 Berlin time, and the lock-in call for
+# each of them is made on its box score - so the first run is at 08:00, not
+# 06:00. Noon and evening pick up the injury report (due 17:00 local the day
+# before, updated through game day), 23:00 the game-day updates an hour or two
+# before the first tip-off.
+@scheduler_fn.on_schedule(schedule="0 8,12,18,23 * * *", timezone=scheduler_fn.Timezone("Europe/Berlin"),
+                          memory=512, timeout_sec=540)
+def refresh_nba(event: scheduler_fn.ScheduledEvent) -> None:
+    """NBA snapshot refresh: data and every configured user's overview."""
+    result = api_core.update_sleeper_data_api("nba")
+    print(f"[nba] {result.get('message')}")
+    for username in SNAPSHOT_USERS:
+        print(f"[overview nba] {api_core.build_overview_snapshot(username, 'nba')['message']}")

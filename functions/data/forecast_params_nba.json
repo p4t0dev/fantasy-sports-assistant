@@ -1,0 +1,70 @@
+{
+  "season": "2025",
+  "split_week": 13,
+  "params": {
+    "a": -0.594,
+    "b": 0.9808,
+    "b2b": 1.0,
+    "sigma0": 7.2,
+    "sigma1": 0.116,
+    "dnp": 0.0302
+  },
+  "game": {
+    "games_train": 11077,
+    "games_test": 12228,
+    "rmse_sleeper": 10.18,
+    "calibration": {
+      "a": -0.59,
+      "b": 0.981,
+      "rmse": 10.11,
+      "kept": true
+    },
+    "b2b": {
+      "factor": 0.971,
+      "rmse": 10.11,
+      "games_train": 1848,
+      "kept": false
+    },
+    "form": {
+      "weight": 0.25,
+      "rmse": 10.07,
+      "gain": 0.039,
+      "kept": false
+    },
+    "rmse_model": 10.11
+  },
+  "week": {
+    "by_games": {
+      "1": {
+        "weeks": 371,
+        "value": 24.2,
+        "locked": 22.2,
+        "no_lock": 22.2
+      },
+      "2": {
+        "weeks": 874,
+        "value": 30.6,
+        "locked": 29.9,
+        "no_lock": 25.6
+      },
+      "3": {
+        "weeks": 1371,
+        "value": 33.3,
+        "locked": 33.3,
+        "no_lock": 26.7
+      },
+      "4": {
+        "weeks": 1078,
+        "value": 35.5,
+        "locked": 34.3,
+        "no_lock": 26.0
+      }
+    },
+    "pairwise": {
+      "value": 0.514,
+      "sum": 0.507,
+      "per_game": 0.508
+    },
+    "pairs": 18142
+  }
+}

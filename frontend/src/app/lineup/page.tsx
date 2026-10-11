@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { Player, LineupSlot, Injury, LineupChange, CloseCall, MatchupStance } from "@/lib/types";
+import type { Player, LineupSlot, Injury, LineupChange, CloseCall, LockCall, MatchupStance } from "@/lib/types";
 import {
   InjuryBadge,
   SignalBadges,
@@ -14,7 +14,7 @@ import {
   MatchupBadge,
   startPts,
 } from "@/components/PlayerBadges";
-import { CloseCalls, ForecastDelta, ForecastDetail, MatchupLine } from "@/components/ForecastDetail";
+import { CloseCalls, ForecastDelta, ForecastDetail, LockCalls, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
 import { Section, SectionNav, useSections } from "@/components/Section";
 
@@ -32,6 +32,7 @@ type LineupData = {
   empty: string[];
   warnings: { slot: string; player: string; injury: Injury }[];
   close_calls?: CloseCall[];
+  lock_calls?: LockCall[];
   matchup?: MatchupStance | null;
   positions: string[];
 };
@@ -457,8 +458,9 @@ function LineupContent() {
             {gain > 0 && <span className="text-green-400 font-bold"> (+{gain})</span>}
           </p>
         </div>
-        <div className="mb-3">
+        <div className="mb-3 space-y-2">
           <MatchupLine stance={data?.matchup} />
+          <LockCalls calls={data?.lock_calls} />
         </div>
 
         {changes.length > 0 && (

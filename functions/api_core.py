@@ -11,6 +11,7 @@ import projections
 import usage
 import forecast
 import gameday
+import nba
 
 class EspnUnavailable(Exception):
     """ESPN did not answer - a gap to retry, not a verdict on the player."""
@@ -267,12 +268,36 @@ def projected_points(sport, scoring_settings, players_db):
 WEEK_HORIZON = 5
 
 
+def schedule_file(sport, season):
+    return f"schedule_{sport}_{season}.json"
+
+
+def load_schedule(sport):
+    """The season's schedule, stored by the refresh and fetched live otherwise."""
+    season = current_season(sport)
+    filename = schedule_file(sport, season)
+    data = load_json(filename)
+    if data:
+        return data
+    data = sleeper_api.get_schedule(sport, season) or []
+    if data:
+        _JSON_CACHE[filename] = (time.time(), data)
+    return data
+
+
 def current_week(sport):
     """The week lineups are being set for, or None outside the regular season.
 
     Sleeper's `week` turns over on Tuesday, when the previous week is scored,
     so from then on it names the week whose games are coming up.
+
+    The NBA's week is read off the schedule instead (functions/nba.py): its
+    weeks run Monday to Sunday, and the week is the one whose games are not
+    all over yet - from a few days before opening night, so the first
+    lineup can be set with the first forecast.
     """
+    if sport == "nba":
+        return nba.week_of(load_schedule(sport), _today_us())
     if sport != "nfl":
         return None
     state = sleeper_api.get_state(sport) or {}
@@ -288,6 +313,13 @@ def fetch_week_window(sport, season, week):
     """Projections for `week` and the weeks behind it, as stored on disk."""
     weeks = {}
     for w in range(week, week + WEEK_HORIZON):
+        if sport == "nba":
+            # One row per game; the schedule itself comes from the schedule.
+            games = projections.fetch_week_games(sport, season, w)
+            if not games:
+                break  # failed, or past the end of the regular season
+            weeks[str(w)] = {"games": games}
+            continue
         data = projections.fetch_week_projections(sport, season, w)
         if data is None:
             # A failed request must not pass for a bye week, so the window
@@ -501,6 +533,8 @@ def weekly_points(sport, scoring_settings, players_db):
     weeks = sorted(int(w) for w in data["weeks"] if int(w) >= week)[:WEEK_HORIZON]
     if not weeks:
         return None
+    if sport == "nba":
+        return _nba_weekly(data, week, weeks, scoring_settings, players_db)
 
     pts = {}
     for i, w in enumerate(weeks):
@@ -511,6 +545,8 @@ def weekly_points(sport, scoring_settings, players_db):
             row[i] = round(calculate_custom_score(p_stats, pos, scoring_settings, sport), 2)
 
     return {
+        "sport": sport,
+        "pace_weeks": projections.SEASON_GAMES["nfl"],
         "week": week,
         "weeks": weeks,
         "pts": pts,
@@ -521,6 +557,83 @@ def weekly_points(sport, scoring_settings, players_db):
         "allowed": points_allowed_table(sport, scoring_settings, players_db or {}),
         "prev": previous_season_rates(sport, scoring_settings, players_db or {}),
         "context": load_gameday(sport, week),
+    }
+
+
+def current_games_file(sport, year):
+    return f"stats_{sport}_{year}_current.json"
+
+
+# Box scores of this week's games are what the lock-in decision is made on,
+# the morning after. Older than this, they are fetched again.
+CURRENT_GAMES_TTL = 3600
+
+
+def load_current_games(sport, week):
+    """{pid: [{date, team, opp, stats}]} for the games of `week` played so far."""
+    season = current_season(sport)
+    filename = current_games_file(sport, season)
+    data = load_json(filename) or {}
+    fresh = time.time() - (data.get("fetched_at") or 0) < CURRENT_GAMES_TTL
+    if data.get("week") == week and fresh:
+        return data.get("games") or {}
+    games = projections.fetch_week_games(sport, season, week, base=projections.STATS_URL)
+    if games is None:
+        # A failed fetch keeps what is stored for this week rather than none.
+        return (data.get("games") or {}) if data.get("week") == week else {}
+    _JSON_CACHE[filename] = (time.time(), {"week": week, "fetched_at": int(time.time()),
+                                            "games": games})
+    return games
+
+
+def nba_scoring_scale(scoring_settings):
+    """This league's points for an average starter's game against Sleeper's
+    default - how far one game swings scales with it."""
+    default = calculate_custom_score(nba.REFERENCE_LINE, "PG", {}, "nba")
+    league = calculate_custom_score(nba.REFERENCE_LINE, "PG", scoring_settings or {}, "nba")
+    return league / default if default > 0 and league > 0 else 1.0
+
+
+def _nba_weekly(data, week, weeks, scoring_settings, players_db):
+    """The NBA's half of `weekly_points`: games, not weeks (functions/nba.py).
+
+      games     {week: {pid: [(date, opponent, Sleeper points)]}}, scored
+                under this league's settings, one entry per projected game
+      schedule  {week: {team: [(date, opponent)]}}; a team missing has no game
+      dates     {team: every game date of the season}, for back-to-backs
+      played    {pid: [(date, points)]}: this week's games already over
+    """
+    players_db = players_db or {}
+
+    def score(pid, stats):
+        pos = (players_db.get(str(pid)) or {}).get("position")
+        return round(calculate_custom_score(stats, pos, scoring_settings, "nba"), 2)
+
+    games = {}
+    for w in weeks:
+        games[w] = {pid: [(g["date"], g.get("opp"), score(pid, g["stats"])) for g in rows]
+                    for pid, rows in (data["weeks"][str(w)].get("games") or {}).items()}
+    schedule = load_schedule("nba")
+    today = _today_us()
+    played = {}
+    try:
+        for pid, rows in (load_current_games("nba", week) or {}).items():
+            done = [(g["date"], score(pid, g["stats"])) for g in rows if g["date"] < today]
+            if done:
+                played[pid] = done
+    except Exception as e:  # noqa: BLE001 - lock advice, never a failed request
+        print(f"Current NBA games failed: {e}")
+    return {
+        "sport": "nba",
+        "pace_weeks": nba.SEASON_WEEKS,
+        "week": week,
+        "weeks": weeks,
+        "games": games,
+        "schedule": {w: nba.team_games(schedule, w) for w in weeks},
+        "dates": nba.team_dates(schedule),
+        "played": played,
+        "today": today,
+        "scale": nba_scoring_scale(scoring_settings),
     }
 
 
@@ -1176,9 +1289,14 @@ def replacement_points(levels):
     return {pos: lv["pts"] for pos, lv in levels.items()}
 
 
-# In season the waiver board ranks by forecast pace (per week × 17); every
-# number it prints is divided back to a week, the unit the lineup page uses.
+# In season the waiver board ranks by forecast pace (per week × a season's
+# weeks: 17 in the NFL, 25 in the NBA); every number it prints is divided back
+# to a week, the unit the lineup page uses.
 PACE_UNIT = (float(projections.SEASON_GAMES["nfl"]), "Pkt/Woche")
+
+
+def _pace_unit(weekly):
+    return (float(weekly.get("pace_weeks") or PACE_UNIT[0]), PACE_UNIT[1]) if weekly else None
 
 
 def roster_needs(my_players, roster_positions, levels, unit=None):
@@ -1326,6 +1444,28 @@ def faab_recommendation(sig, need_severity, budget_left, is_upgrade):
     }
 
 
+# A player in his first three seasons is an asset to hold in dynasty and keeper
+# leagues up to this Sleeper rank - or, in the NBA, at this age or younger. In
+# the NFL, rank 600 covers about half of the young skill players; the NBA's
+# pool is a fifth the size, and 600 covered three in four of its young players,
+# the whole end of every bench. Rank 300 is roughly who is rostered at all in
+# a 12-team dynasty league - but Sleeper ranks a 19-year-old rookie stash
+# (Karim Lopez, 380) below that, and an NBA prospect is bought for the years
+# he has not played yet. So the age keeps him.
+YOUTH_RANK = {"nfl": 600, "nba": 300}
+YOUTH_AGE = {"nba": 22}
+
+
+def _young_asset(player):
+    if (player.get("years_exp") or 0) > 2:
+        return False
+    sport = sport_of(player)
+    if (player.get("search_rank") or 999999) <= YOUTH_RANK.get(sport, 600):
+        return True
+    age = player.get("age")
+    return sport in YOUTH_AGE and isinstance(age, (int, float)) and age <= YOUTH_AGE[sport]
+
+
 def drop_protection(player, dvs, pts, sig, levels, profile=DYNASTY, pos=None):
     """Reasons never to recommend dropping someone.
 
@@ -1339,12 +1479,10 @@ def drop_protection(player, dvs, pts, sig, levels, profile=DYNASTY, pos=None):
     "liefert noch Startwert" - which protected the entire IDP half of a roster
     from ever being offered as a drop.
     """
-    years_exp = player.get("years_exp") or 0
-    rank = player.get("search_rank") or 999999
     level = levels.get(pos or canonical_pos(player), {})
     threshold = level.get("dvs", 0)
 
-    if profile["protect_youth"] and years_exp <= 2 and rank <= 600:
+    if profile["protect_youth"] and _young_asset(player):
         return "Junges Asset mit Draft-Kapital — halten"
     # An ageing star has little dynasty value left but can still be a weekly
     # starter. Dropping him for a younger bench piece loses points right now.
@@ -1585,7 +1723,8 @@ def plan_moves(my_players, available, roster_positions, levels, needs=None,
 SINGLE_SLOT_POS = {"K", "DEF"}
 DEPTH_MOVE_MIN_EDGE = 25.0
 # The same floor where depth moves compare forecast points (redraft, chopped):
-# a season of one point a week - 17 in season-scale pace.
+# a season of one point a week - 17 in season-scale pace (the unit's divisor,
+# 25 in the NBA).
 DEPTH_MOVE_MIN_EDGE_PTS = 17.0
 # One recommendation set should not empty a position. Twice from a position the
 # roster is comfortable at is already generous; a flagged position gives up one
@@ -1627,7 +1766,8 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
     """
     moves = []
     metric = profile["depth_metric"]
-    min_edge = DEPTH_MOVE_MIN_EDGE if metric == "dvs" else DEPTH_MOVE_MIN_EDGE_PTS
+    min_edge = (DEPTH_MOVE_MIN_EDGE if metric == "dvs"
+                else unit[0] if unit else DEPTH_MOVE_MIN_EDGE_PTS)
     severity = {n["pos"]: n["severity"] for n in (needs or [])}
     drops_per_pos, adds_per_pos = {}, {}
     # A sequence that adds a tight end for a lineman and then a lineman for a
@@ -1903,8 +2043,12 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None):
     """
     if not weekly:
         return {"pts_week": None, "pts_week_base": None, "pts_horizon": None,
-                "pts_pace": None, "horizon": None, "opp": None, "bye": False,
-                "bye_week": None, "locked": False, "usage": None, "forecast": None}
+                "pts_pace": None, "pace_weeks": None, "season_games": None,
+                "horizon": None, "opp": None,
+                "bye": False, "bye_week": None, "locked": False, "usage": None,
+                "forecast": None, "games_week": None, "lock": None, "spread": None}
+    if weekly.get("sport") == "nba":
+        return _nba_week_fields(str(pid), player, sig, weekly, horizon_weights)
 
     pid = str(pid)
     weeks = weekly["weeks"]
@@ -1937,7 +2081,11 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None):
         "pts_week": pts_week,
         "pts_week_base": round(sleeper, 1),
         "pts_horizon": round(total, 1),
-        "pts_pace": round(per_week * projections.SEASON_GAMES.get("nfl", 17), 1),
+        "pts_pace": round(per_week * weekly["pace_weeks"], 1),
+        "pace_weeks": weekly["pace_weeks"],
+        # What the season projection in `pts_season` divides by: games, which
+        # in the NBA are not weeks.
+        "season_games": projections.SEASON_GAMES[weekly["sport"]],
         "horizon": horizon,
         "opp": opp,
         "bye": bool(byes) and byes[0] == weeks[0],
@@ -1953,7 +2101,140 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None):
         "forecast": ({k: fc[k] for k in ("P", "B", "K", "A", "S", "F", "n", "Q",
                                          "weights", "R", "M", "W", "explain")}
                      if fc else None),
+        "games_week": None,
+        "lock": None,
+        "spread": None,
     }
+
+
+def _weighted_mean(values, weights):
+    w = (weights or [1] * len(values))[:len(values)]
+    w += [1] * (len(values) - len(w))
+    return sum(wi * v for wi, v in zip(w, values)) / sum(w) if values else 0.0
+
+
+def _nba_week(rows, team, weekly, injury):
+    """[(mu, sigma, q)] for these games, and the calibrated means alone."""
+    dates = (weekly.get("dates") or {}).get(team)
+    qs = nba.dnp_chances(len(rows), injury)
+    spec = []
+    for (date, _, S), q in zip(rows, qs):
+        mu = nba.game_mean(S, nba.is_back_to_back(dates, date))
+        spec.append((mu, nba.sigma(mu, weekly.get("scale") or 1.0), q))
+    return spec
+
+
+def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None):
+    """`_week_fields` for the NBA: one game per starter and week (Lock-In).
+
+    Each week is worth the optimal lock-in value over his games in it
+    (functions/nba.py). This week counts only the games still to come, plus
+    the one he just played while it can still be locked: whichever is more,
+    that game's score or what the rest is worth. A player whose last game of
+    the week is over is `locked` - his score stands. A team without a game
+    this week is a bye.
+    """
+    weeks = weekly["weeks"]
+    team = player.get("team")
+    today = weekly["today"]
+    injury = (sig or {}).get("injury") or {}
+    played = weekly["played"].get(pid) or []
+
+    horizon = []
+    now = None
+    for i, week in enumerate(weeks):
+        rows = weekly["games"][week].get(pid) or []
+        sched = (weekly["schedule"].get(week) or {}).get(team) if team else None
+        if i == 0:
+            rows = [r for r in rows if r[0] >= today]
+        week_injury = injury if i == 0 or injury.get("term") == "long" else {}
+        spec = _nba_week(rows, team, weekly, week_injury)
+        value, thresholds = nba.lockin_value(spec)
+        if i == 0:
+            healthy, _ = nba.lockin_value(_nba_week(rows, team, weekly, {}))
+            now = {"rows": rows, "spec": spec, "value": value, "healthy": healthy,
+                   "sched": sched or []}
+        horizon.append({"week": week,
+                        "opp": "/".join(o for _, o in sched) if sched else None,
+                        "games": len(rows), "pts": round(value, 1)})
+
+    rows, spec, rest = now["rows"], now["spec"], now["value"]
+    last = played[-1] if played else None
+    locked = bool(played) and not rows
+    lock = None
+    if last is not None:
+        lock = nba.lock_advice(last[1], rest if rows else None)
+        lock["date"] = last[0]
+    if locked:
+        pts_week = last[1]  # never locked earlier: his last game counts
+    elif lock:
+        pts_week = max(last[1], rest)
+    else:
+        pts_week = rest
+    base = max(last[1], now["healthy"]) if lock and not locked else (
+        last[1] if locked else now["healthy"])
+
+    mus = [mu for mu, _, _ in spec]
+    raw = [S for _, _, S in rows]
+    mean_mu = sum(mus) / len(mus) if mus else 0.0
+    explain = []
+    if rows:
+        explain.append(f"Lock-In: pro Woche zählt ein Spiel - {len(rows)} "
+                       f"{'Spiel' if len(rows) == 1 else 'Spiele'} übrig "
+                       f"({', '.join(d[5:].replace('-', '.') for d, _, _ in rows)})")
+        explain.append("Sleeper pro Spiel " + " / ".join(_fmt1(x) for x in raw)
+                       + f", kalibriert Ø {_fmt1(mean_mu)}")
+        risky = [q for _, _, q in spec if q > nba.PARAMS["dnp"]]
+        if risky:
+            label = injury.get("label") or injury.get("status") or "Verletzung"
+            explain.append(f"{label}: Ausfallrisiko nächstes Spiel {round(spec[0][2] * 100)} %")
+        if len(rows) > 1:
+            explain.append(f"Wert bei optimalem Einlocken: {_fmt1(rest)} - mehr Spiele "
+                           "sind mehr Chancen auf ein gutes, nicht mehr Punkte")
+    elif not played:
+        explain.append("Keine Sleeper-Prognose für ein Spiel diese Woche"
+                       if now["sched"] else "Diese Woche kein Spiel")
+    if lock and not lock["final"]:
+        verb = "jetzt einlocken" if lock["lock"] else "nicht einlocken, weiterspielen"
+        cmp = "≥" if lock["lock"] else "<"
+        explain.append(f"Letztes Spiel {_fmt1(lock['score'])} {cmp} {_fmt1(lock['rest'])} "
+                       f"Restwert → {verb}")
+    elif locked:
+        explain.append(f"Alle Spiele gespielt - es zählt {_fmt1(last[1])} "
+                       "(oder das früher eingelockte Spiel)")
+    explain.append(f"Prognose {_fmt1(pts_week)}")
+
+    total = sum(h["pts"] for h in horizon)
+    per_week = _weighted_mean([h["pts"] for h in horizon], horizon_weights)
+    return {
+        "pts_week": round(pts_week, 1),
+        "pts_week_base": round(base, 1),
+        "pts_horizon": round(total, 1),
+        "pts_pace": round(per_week * weekly["pace_weeks"], 1),
+        "pace_weeks": weekly["pace_weeks"],
+        # What the season projection in `pts_season` divides by: games, which
+        # in the NBA are not weeks.
+        "season_games": projections.SEASON_GAMES[weekly["sport"]],
+        "horizon": horizon,
+        "opp": horizon[0]["opp"],
+        "bye": not now["sched"],
+        "bye_week": next((h["week"] for h in horizon if not h["opp"]), None),
+        "locked": locked,
+        "usage": None,
+        "forecast": {"P": round(pts_week, 1), "B": round(mean_mu, 1), "K": 1.0,
+                     "A": round(pts_week / base, 2) if base else 1.0,
+                     "S": round(sum(raw) / len(raw), 1) if raw else None,
+                     "F": None, "n": 0, "Q": None,
+                     "weights": {"S": 1.0, "F": 0.0, "Q": 0.0},
+                     "R": 1.0, "M": 1.0, "W": 1.0, "explain": explain},
+        "games_week": len(rows),
+        "lock": lock,
+        "spread": round(nba.sigma(mean_mu, weekly.get("scale") or 1.0), 1) if mus else None,
+    }
+
+
+def _fmt1(value):
+    return f"{value:.1f}"
 
 
 def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None,
@@ -2092,7 +2373,7 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
         my_players_stats.append(entry)
 
     needs = roster_needs(my_players_stats, roster_positions, levels,
-                         unit=PACE_UNIT if weekly else None)
+                         unit=_pace_unit(weekly))
     need_by_pos = {n["pos"]: n for n in needs}
 
     # ---- Available players ----------------------------------------------
@@ -2144,7 +2425,7 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
         board.append(p)
 
     recommendations = plan_moves(my_players_stats, available, roster_positions, levels, needs,
-                                 unit=PACE_UNIT if weekly else None, profile=profile)
+                                 unit=_pace_unit(weekly), profile=profile)
 
     state = sleeper_api.get_state(sport) or {}
     activity = signals.league_activity(league_id, state.get("week") or 1, players)
@@ -2177,7 +2458,8 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
         "positions": sorted(league_positions),
         # What `pts` means on this board: forecast pace over these weeks, or
         # the season projection off-season.
-        "horizon": ({"weeks": weekly["weeks"], "weights": hw} if weekly else None),
+        "horizon": ({"weeks": weekly["weeks"], "weights": hw,
+                     "pace_weeks": weekly["pace_weeks"]} if weekly else None),
         # The waiver strategy for this format, so the page can say which.
         "profile": {"key": profile["key"], "label": profile["label"]},
         "faab": {"budget": waiver_budget, "left": budget_left,
@@ -2337,13 +2619,28 @@ FORECAST_NOTE_GAP = 1.0
 # risk instead of by the tenth of a point between two forecasts.
 FAVORITE_MARGIN = 10.0
 
+# The same lines for the NBA, scaled by how far a week swings: one locked
+# NBA game spreads about 10 points (tools/backtest_nba.py), an NFL week about
+# 7, and an NBA lineup has ten starters instead of nine.
+LINEUP_THRESHOLDS = {
+    "nfl": {"bench": ISSUE_BENCH_GAIN, "bench_urgent": ISSUE_BENCH_GAIN_URGENT,
+            "favorite": FAVORITE_MARGIN, "close_call": forecast.CLOSE_CALL},
+    "nba": {"bench": 2.0, "bench_urgent": 7.0, "favorite": 15.0, "close_call": 2.0},
+}
+
+
+def _thresholds(weekly):
+    return LINEUP_THRESHOLDS.get((weekly or {}).get("sport"), LINEUP_THRESHOLDS["nfl"])
+
 
 def _spread_of(player):
+    if player.get("spread") is not None:
+        return player["spread"]
     weeks = list(((player.get("usage") or {}).get("pts_by_week") or {}).values())
     return forecast.spread(player.get("real_pos") or player.get("pos"), weeks)
 
 
-def close_calls(changes, stance=None):
+def close_calls(changes, stance=None, close=forecast.CLOSE_CALL):
     """Recommended swaps whose two forecasts are a coin flip apart - and which
     of the two to take given where you stand in your matchup.
 
@@ -2356,7 +2653,7 @@ def close_calls(changes, stance=None):
     out = []
     for change in changes:
         a, b = change.get("in"), change.get("out")
-        if not (a and b) or abs((a.get("pts_week") or 0) - (b.get("pts_week") or 0)) >= forecast.CLOSE_CALL:
+        if not (a and b) or abs((a.get("pts_week") or 0) - (b.get("pts_week") or 0)) >= close:
             continue
         sa, sb = _spread_of(a), _spread_of(b)
         call = {"in": a["name"], "out": b["name"],
@@ -2379,7 +2676,8 @@ def close_calls(changes, stance=None):
     return out
 
 
-def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_total, week):
+def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_total, week,
+                   margin_line=FAVORITE_MARGIN):
     """Where you stand this week: your best lineup against your opponent's.
 
     Both through the same forecast. The opponent is credited with his best
@@ -2411,13 +2709,13 @@ def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_tota
     users = {u["user_id"]: u.get("display_name") or u.get("username")
              for u in sleeper_api.get_users_in_league(league["league_id"]) or []}
     margin = round(my_total - opp_total, 1)
-    kind = ("favorite" if margin >= FAVORITE_MARGIN
-            else "underdog" if margin <= -FAVORITE_MARGIN else "even")
+    kind = ("favorite" if margin >= margin_line
+            else "underdog" if margin <= -margin_line else "even")
     return {"kind": kind, "margin": margin, "opponent": users.get(opp_roster.get("owner_id")),
             "my_total": my_total, "opp_total": round(opp_total, 1)}
 
 
-def lineup_issues(current, gain):
+def lineup_issues(current, gain, limits=None):
     """What is wrong with the lineup as it is set in Sleeper right now.
 
     Graded 3 (scores nothing unless fixed), 2 (likely costs points), 1 (worth
@@ -2442,11 +2740,37 @@ def lineup_issues(current, gain):
             issues.append({"kind": "doubtful", "severity": 2, **entry})
         elif severity == 1:
             issues.append({"kind": "questionable", "severity": 1, **entry})
-    if gain >= ISSUE_BENCH_GAIN:
+        lock = player.get("lock")
+        if lock and lock["lock"] and not lock["final"]:
+            issues.append({"kind": "lock", "severity": 2, "score": lock["score"],
+                           "rest": lock["rest"], **entry})
+    limits = limits or LINEUP_THRESHOLDS["nfl"]
+    if gain >= limits["bench"]:
         issues.append({"kind": "bench", "slot": None, "player": None, "gain": gain,
-                       "severity": 2 if gain >= ISSUE_BENCH_GAIN_URGENT else 1})
+                       "severity": 2 if gain >= limits["bench_urgent"] else 1})
     issues.sort(key=lambda i: -i["severity"])
     return issues
+
+
+def lock_calls(current):
+    """Lock-in calls for the starters who just played (NBA, Lock-In mode).
+
+    The game a starter just played can be locked until his next one starts,
+    and only from a starting slot - Sleeper does not let a bench player lock.
+    Whether he was locked earlier in the week the API does not say, so each
+    call holds only if he was not.
+    """
+    out = []
+    for seat in current:
+        player = seat.get("player") or {}
+        lock = player.get("lock")
+        if not lock or lock["final"]:
+            continue
+        out.append({"slot": seat["slot"], "id": player["id"], "name": player["name"],
+                    "lock": lock["lock"], "score": lock["score"], "rest": lock["rest"],
+                    "date": lock.get("date")})
+    out.sort(key=lambda c: (not c["lock"], -(c["score"] - c["rest"])))
+    return out
 
 
 def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=None):
@@ -2515,7 +2839,8 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
     if league and rosters and weekly:
         try:
             stance = matchup_stance(league, my_roster, rosters, roster_positions, inputs,
-                                    report["total"], weekly["week"])
+                                    report["total"], weekly["week"],
+                                    _thresholds(weekly)["favorite"])
         except Exception as e:  # noqa: BLE001 - advice, never a failed request
             print(f"Matchup stance failed: {e}")
     current_total = round(
@@ -2538,8 +2863,9 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
         "warnings": warnings,
         "forecast_notes": forecast_notes,
         "matchup": stance,
-        "close_calls": close_calls(changes, stance),
-        "issues": lineup_issues(current, gain),
+        "close_calls": close_calls(changes, stance, _thresholds(weekly)["close_call"]),
+        "issues": lineup_issues(current, gain, _thresholds(weekly)),
+        "lock_calls": lock_calls(current),
         "positions": sorted(lineup.positions_in_use(roster_positions)),
     }
 
@@ -2604,6 +2930,13 @@ def forecast_model_api():
                    "close_call": forecast.CLOSE_CALL},
         "weather": {"wind_strong": forecast.WIND_STRONG, "wind_severe": forecast.WIND_SEVERE,
                     "rain_heavy": forecast.RAIN_HEAVY, "effect": forecast.WEATHER_EFFECT},
+        "nba": {"params": nba.PARAMS,
+                "backtest": ({k: nba.BACKTEST.get(k) for k in ("season", "split_week", "game", "week")}
+                             if nba.BACKTEST else None),
+                "season_weeks": nba.SEASON_WEEKS,
+                "next_game_dnp": {str(k): v for k, v in nba.NEXT_GAME_DNP.items()},
+                "out_later_dnp": nba.OUT_LATER_DNP,
+                "thresholds": LINEUP_THRESHOLDS["nba"]},
     }
 
 
@@ -2657,6 +2990,7 @@ def lineup_overview_api(username, sport="nfl"):
         week = week or analysis["week"]
         entry.update({
             "issues": analysis["issues"],
+            "lock_calls": analysis["lock_calls"],
             "changes": analysis["changes"],
             "forecast_notes": analysis["forecast_notes"],
             "close_calls": analysis["close_calls"],
@@ -2697,7 +3031,7 @@ def _move_summary(rec):
 
     def side(p):
         return {"id": p["id"], "name": p["name"], "pos": p["pos"], "team": p["team"],
-                "per_week": round((p.get("pts") or 0) / projections.SEASON_GAMES["nfl"], 1)
+                "per_week": round((p.get("pts") or 0) / (p.get("pace_weeks") or PACE_UNIT[0]), 1)
                 if p.get("pts_season") is not None else None,
                 "injury": p.get("injury")}
 
@@ -2805,6 +3139,14 @@ def update_sleeper_data_api(sport="nfl", college_batch=25):
 
     # The weekly window moves every Tuesday and its projections move with every
     # injury report, so it is refetched on every run rather than topped up.
+    if sport == "nba":
+        # The NBA's week is read off the schedule, so it is stored first.
+        schedule = sleeper_api.get_schedule(sport, str(current_year))
+        if schedule:
+            _write_data(schedule_file(sport, str(current_year)), schedule)
+            updated.append(f"Spielplan {len(schedule)} Spiele")
+        else:
+            errors.append("Spielplan")
     week = current_week(sport)
     if week:
         window = fetch_week_window(sport, str(current_year), week)
@@ -2814,7 +3156,17 @@ def update_sleeper_data_api(sport="nfl", college_batch=25):
             updated.append(f"Wochenprojektionen W{first}-W{last}")
         else:
             errors.append("Wochenprojektionen")
-        schedule = sleeper_api.get_schedule(sport, str(current_year))
+        if sport == "nba":
+            # What the lock-in calls of the morning after are made on.
+            games = projections.fetch_week_games(sport, str(current_year), week,
+                                                 base=projections.STATS_URL)
+            if games is not None:
+                _write_data(current_games_file(sport, str(current_year)),
+                            {"week": week, "fetched_at": int(time.time()), "games": games})
+                updated.append(f"Box-Scores W{week}")
+            else:
+                errors.append("Box-Scores")
+        schedule = sleeper_api.get_schedule(sport, str(current_year)) if sport == "nfl" else None
         if schedule:
             context = gameday.fetch_context(schedule, week)
             # A failed fetch returns roofs only. Keep the last good forecast
@@ -2830,7 +3182,7 @@ def update_sleeper_data_api(sport="nfl", college_batch=25):
             bits.append(f"Vegas {len(context['odds'])} Teams" if context["odds"]
                         else "keine Vegas-Linien (ODDS_API_KEY fehlt?)")
             updated.append(", ".join(bits))
-        if week >= 2:
+        if sport == "nfl" and week >= 2:
             filename = week_stats_file(sport, str(current_year))
             played = fetch_played_weeks(sport, str(current_year), week, load_json(filename))
             if played["weeks"]:

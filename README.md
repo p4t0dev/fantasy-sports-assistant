@@ -24,7 +24,8 @@ Functions rufen sie beide auf — es gibt keine zweite Kopie mehr.
 - `functions/api_core.py` — Datenschicht, Scoring-Modell (RVS/DVS), Waiver- und
   Draft-Analyse
 - `functions/lineup.py` — Slot-Zuordnung (optimale Aufstellung) und Bedarfsanalyse
-- `functions/main.py` — HTTP-Endpunkte + Datenrefresh dreimal täglich
+- `functions/nba.py` — NBA-Woche: Lock-In-Wert und Einlock-Schwellen pro Spieler
+- `functions/main.py` — HTTP-Endpunkte + Datenrefresh (NFL dreimal, NBA viermal täglich)
 
 ## Bewertungsmodell
 
@@ -219,11 +220,61 @@ Daten Sleeper nicht geliefert hat, heißt so — nicht „kein Kader“.
 Die Übersicht ist ein **Snapshot**, nie eine Live-Berechnung: alle Ligen durch
 das volle Modell dauern für einen Seitenaufruf zu lange, und die Antwort ändert
 sich nur mit neuen Prognosen und Meldungen. `refresh_data` baut sie um 06:00,
-12:00 und 18:00 (Europe/Berlin) für jeden Username in `FSA_SNAPSHOT_USERS` neu;
+12:00 und 18:00 (Europe/Berlin) für jeden Username in `FSA_SNAPSHOT_USERS` neu,
+`refresh_nba` die NBA-Übersicht um 08:00, 12:00, 18:00 und 23:00;
 `get_overview` liefert nur, was gespeichert ist. Gelesen wird direkt aus Cloud
 Storage statt über `load_json`, das eine Datei einmal pro Container zieht und
 danach die lokale Kopie ausliefert — für einen Snapshot, der dreimal am Tag in
 einem anderen Container entsteht, hieße das: veraltet bis zum Neustart.
+
+## NBA-Woche (Lock-In)
+
+Sleeper-NBA-Ligen laufen im Lock-In-Modus (`settings.game_mode == 1`, in
+allen geprüften Ligen 2025 und 2026): Die Woche geht von Montag bis Sonntag,
+und **jeder Starter zählt mit genau einem Spiel**. Nach einem Spiel kann man
+es einlocken, bis sein nächstes beginnt; wer nie eingelockt wird, zählt mit
+seinem letzten Spiel der Woche. Die Matchup-Daten 2025 bestätigen das: die
+Punkte jedes Starters entsprechen genau einem seiner Spiele.
+
+Eine Woche ist deshalb nicht „Spiele × Punkte pro Spiel“. `functions/nba.py`
+rechnet den Wert der Woche als optimale Stopp-Regel über seine Spiele: von
+hinten, jedes Spiel ist so viel wert wie der Erwartungswert von „einlocken,
+wenn es besser ist als der Rest der Woche“. Dieselbe Schwelle ist die
+Einlock-Empfehlung, die die Aufstellung nach jedem Spiel zeigt. Im Backtest
+auf der zweiten Hälfte 2025 (Starter ab 15 Punkten pro Spiel):
+
+| Spiele | Prognose | real eingelockt | ohne Einlocken |
+|---|---|---|---|
+| 1 | 24.2 | 22.2 | 22.2 |
+| 2 | 30.6 | 29.9 | 25.6 |
+| 3 | 33.3 | 33.3 | 26.7 |
+| 4+ | 35.5 | 34.3 | 26.0 |
+
+Vier Spiele sind gut 4 Punkte mehr wert als zwei, nicht das Doppelte. Optimales
+Einlocken bringt pro Starter und Woche rund 7 Punkte gegenüber gar keinem.
+
+- **Woche:** aus dem Spielplan (`/schedule/nba/regular/<Saison>`; Sleeper
+  nennt die Saison 2026-27 „2026“), die erste Woche, deren Spiele nicht alle
+  vorbei sind. Ab 10 Tage vor dem ersten Spieltag ist es Woche 1.
+- **Prognose pro Spiel:** Sleepers Wochenprojektion kommt pro Spiel (eine
+  Zeile je Spieler und Spiel), kalibriert auf `a + b × S`. Back-to-backs und
+  Form der letzten Spiele schlagen Sleeper im Backtest nicht und bleiben
+  draußen; Sleeper preist beides schon ein.
+- **Ausfälle:** ohne Meldung das gemessene Ausfallrisiko, sonst für das
+  nächste Spiel Questionable 35 %, Doubtful 75 %, Out 100 % (die übrigen
+  Spiele nach einem Out 50 %); IR und Sperren für die ganze Woche.
+- **Schwellen:** knappe Entscheidung unter 2 Punkten, Favorit ab 15, Bank-
+  Gewinn ab 2 (dringend ab 7) — die NFL-Werte, skaliert mit der größeren
+  Streuung eines NBA-Spiels.
+- **Waiver:** die Prognose über fünf Wochen, × 25 Wochen auf die Saisonskala.
+  Wochen mit vielen Spielen zählen damit mehr, aber nur so viel, wie die
+  zusätzlichen Chancen wert sind.
+- **Drop-Schutz:** junge Spieler (bis drittes Jahr) bis Sleeper-Rang 300 oder
+  bis 22 Jahre — Rang 600 wie in der NFL schützte drei von vier jungen
+  NBA-Spielern, Rang allein aber nicht den 19-jährigen Rookie-Stash.
+
+Neu fitten: `python3 tools/backtest_nba.py --season 2025 --write` (schreibt
+`functions/data/forecast_params_nba.json`).
 
 ## Draft-Board
 
@@ -416,8 +467,8 @@ ihn in `localStorage` dieses Browsers ab.
 `college_stats.json` und die Übersichten `overview_*.json` sind bewusst **nicht**
 eingecheckt (players.json allein ist 16 MB). Sie werden erzeugt durch:
 
-- die geplante Function `refresh_data` (NFL um 06:00, 12:00 und 18:00, NBA um
-  06:00, Europe/Berlin), oder
+- die geplanten Functions `refresh_data` (NFL um 06:00, 12:00 und 18:00) und
+  `refresh_nba` (NBA um 08:00, 12:00, 18:00 und 23:00, Europe/Berlin), oder
 - den Button „Daten aktualisieren“, oder
 - `assistant.py --update`
 
