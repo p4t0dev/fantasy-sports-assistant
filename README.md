@@ -260,6 +260,12 @@ Einlocken bringt pro Starter und Woche rund 7 Punkte gegenüber gar keinem.
   Zeile je Spieler und Spiel), kalibriert auf `a + b × S`. Back-to-backs und
   Form der letzten Spiele schlagen Sleeper im Backtest nicht und bleiben
   draußen; Sleeper preist beides schon ein.
+- **Nur Starter-Spiele zählen:** Ein Spiel, das er auf der Bank (oder als
+  Free Agent) bestritten hat, lässt sich nicht einlocken und zählt nicht.
+  Einen Bankspieler nach einem großen Abend hochzuziehen bringt nur seine
+  restlichen Spiele der Woche, und so rechnen Optimierer, Bank-Hinweis und
+  Matchup (auch für die Bank des Gegners). Ob er im Spiel startete, verrät
+  die API nicht; es gilt, wo er jetzt steht.
 - **Ausfälle:** ohne Meldung das gemessene Ausfallrisiko, sonst für das
   nächste Spiel Questionable 35 %, Doubtful 75 %, Out 100 % (die übrigen
   Spiele nach einem Out 50 %); IR und Sperren für die ganze Woche.

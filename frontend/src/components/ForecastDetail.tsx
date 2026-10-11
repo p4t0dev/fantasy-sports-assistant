@@ -14,18 +14,26 @@ const PART_TONE = {
 } as const;
 
 /** "Sleeper 9.0" next to a forecast that differs from it, so every
- *  deviation is visible without opening anything. */
+ *  deviation is visible without opening anything. In the NBA the base is
+ *  not Sleeper's number but the same week without the injury risk - the
+ *  model takes Sleeper's per-game projection as it is, so that is the only
+ *  thing a difference can come from. */
 export function ForecastDelta({ player }: { player: Player }) {
   const base = player.pts_week_base;
   const forecast = player.pts_week;
   if (base == null || forecast == null || Math.abs(forecast - base) < 0.5) return null;
   const up = forecast > base;
+  const nba = player.games_week != null;
   return (
     <span
-      title="Sleepers eigene Wochenprognose. Die Zahl daneben ist unsere Prognose."
+      title={
+        nba
+          ? "Unsere Wochenprognose, wenn er alle Spiele bestreitet. Die Zahl daneben enthält das Ausfallrisiko."
+          : "Sleepers eigene Wochenprognose. Die Zahl daneben ist unsere Prognose."
+      }
       className={`text-[10px] font-medium ${up ? "text-emerald-400/80" : "text-orange-400/80"}`}
     >
-      Sleeper {base.toFixed(1)}
+      {nba ? "ohne Ausfall" : "Sleeper"} {base.toFixed(1)}
     </span>
   );
 }
