@@ -10,7 +10,10 @@ initialize_app()
 
 # Comma separated list of allowed origins, or "*". Set FSA_ALLOWED_ORIGINS to the
 # Hosting domains once deployed so the API is not callable from any page.
-ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("FSA_ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+# An empty value (a variable set but left blank) counts as unset: an empty list
+# here made every response fail on ALLOWED_ORIGINS[0].
+ALLOWED_ORIGINS = ([o.strip() for o in os.environ.get("FSA_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+                   or ["*"])
 
 # Shared secret for the manual refresh. Unset means the endpoint stays closed -
 # the scheduled job calls the updater directly and is unaffected either way.
@@ -189,7 +192,12 @@ def analyze_waivers(req: https_fn.Request) -> https_fn.Response:
 # ODDS_API_KEY: The Odds API, for the Vegas lines in the weekly forecast. A
 # secret, not an env var - it is a paid account. Must exist before deploying:
 # firebase functions:secrets:set ODDS_API_KEY
-@https_fn.on_request(memory=512, timeout_sec=300, secrets=["FSA_REFRESH_TOKEN", "ODDS_API_KEY"])
+#
+# One request per instance: the button refreshes NFL and NBA at the same time,
+# and each holds a sport's whole player database in memory - two in one 512 MB
+# instance would not fit. (It is the default below one CPU; pinned so it stays.)
+@https_fn.on_request(memory=512, timeout_sec=300, concurrency=1,
+                     secrets=["FSA_REFRESH_TOKEN", "ODDS_API_KEY"])
 def update_data(req: https_fn.Request) -> https_fn.Response:
     if req.method == 'OPTIONS':
         return _preflight(req)

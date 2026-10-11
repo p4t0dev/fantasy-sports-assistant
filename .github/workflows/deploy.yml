@@ -74,9 +74,19 @@ jobs:
 
       - name: Functions config
         if: env.READY == 'true'
+        env:
+          ALLOWED_ORIGINS: ${{ vars.FSA_ALLOWED_ORIGINS }}
+          SNAPSHOT_USERS: ${{ vars.FSA_SNAPSHOT_USERS }}
         run: |
+          # A typo in the origins locks the app out of its own API without a
+          # single error in the function logs - stop here instead of deploying it.
+          if ! out=$(tools/check_origins.sh "$ALLOWED_ORIGINS"); then
+            echo "::error::$(echo "$out" | head -1) (Variable FSA_ALLOWED_ORIGINS, siehe README)"
+            echo "$out"
+            exit 1
+          fi
           printf 'FSA_ALLOWED_ORIGINS=%s\nFSA_SNAPSHOT_USERS=%s\n' \
-            "${{ vars.FSA_ALLOWED_ORIGINS }}" "${{ vars.FSA_SNAPSHOT_USERS }}" > functions/.env
+            "$ALLOWED_ORIGINS" "$SNAPSHOT_USERS" > functions/.env
 
       - name: Deploy
         if: env.READY == 'true'

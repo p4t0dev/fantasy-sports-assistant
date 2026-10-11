@@ -29,6 +29,7 @@ if ! firebase functions:secrets:access ODDS_API_KEY >/dev/null 2>&1; then
 fi
 
 [ -f functions/.env ] || { echo "functions/.env fehlt - aus functions/.env.example anlegen (FSA_ALLOWED_ORIGINS, FSA_SNAPSHOT_USERS)."; exit 1; }
+tools/check_origins.sh "$(sed -n 's/^FSA_ALLOWED_ORIGINS=//p' functions/.env | tail -1)"
 [ -f frontend/.env.local ] || [ -n "${NEXT_PUBLIC_API_URL:-}" ] || {
   echo "NEXT_PUBLIC_API_URL fehlt - in frontend/.env.local setzen, sonst zeigt der Build auf localhost."; exit 1; }
 

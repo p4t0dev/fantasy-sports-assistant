@@ -405,11 +405,18 @@ Secrets and variables → Actions:
 |---|---|---|
 | Secret | `FIREBASE_SERVICE_ACCOUNT` | JSON-Key eines Service-Accounts mit den Rollen Firebase Admin, Cloud Functions Admin, Service Account User, Secret Manager Viewer, Cloud Scheduler Admin. Eigenes Konto anlegen (z. B. `github-deploy`), nicht die vorhandenen Standard- oder Admin-SDK-Konten |
 | Variable | `NEXT_PUBLIC_API_URL` | Basis-URL der Functions, wie in `frontend/.env.local` |
-| Variable | `FSA_ALLOWED_ORIGINS` | wie in `functions/.env` |
+| Variable | `FSA_ALLOWED_ORIGINS` | wie in `functions/.env`: `https://<projekt>.web.app,https://<projekt>.firebaseapp.com` |
 | Variable | `FSA_SNAPSHOT_USERS` | wie in `functions/.env` |
 
 Ohne Secret oder `NEXT_PUBLIC_API_URL` laufen Tests, Lint und Build als
 Prüfung, der Lauf endet grün mit einer Warnung, was fehlt — kein Deploy. `tools/deploy.sh` bleibt für den Deploy von Hand.
+
+`FSA_ALLOWED_ORIGINS` prüft `tools/check_origins.sh` vor jedem Deploy (auch in
+`tools/deploy.sh`): jeder Eintrag `https://host`, kleingeschrieben, ohne `/` am
+Ende, oder `*`. Ein Tippfehler dort fällt sonst nirgends auf: Die Seiten laden
+weiter, die Function-Logs bleiben sauber, nur der Button meldet
+„Netzwerkfehler“, weil der Browser schon die Vorab-Anfrage verwirft. Ein
+leerer Wert gilt als `*`.
 
 ### Version
 
@@ -447,8 +454,9 @@ firebase functions:secrets:set FSA_REFRESH_TOKEN
 `FSA_SNAPSHOT_USERS` ist Opt-in per Konfiguration statt „beim ersten Aufruf“:
 eine Übersicht rechnet jede Liga eines Users durchs volle Modell, und ein
 öffentlicher Endpunkt, der das für jeden übergebenen Namen täte, wäre dieselbe
-offene Kostenquelle. Der Button „Daten aktualisieren“ baut die Übersichten nach
-dem Refresh ebenfalls neu.
+offene Kostenquelle. Der Button „Daten aktualisieren“ lädt NFL und NBA neu,
+als zwei parallele Aufrufe (`update_data?sport=…`, je eine Instanz mit eigenem
+Zeitlimit), und baut danach beide Übersichten ebenfalls neu.
 
 `ODDS_API_KEY` (The Odds API, für die Vegas-Linien) ist ein Secret und muss
 **vor dem Deploy** existieren, sonst schlägt der Deploy fehl:
