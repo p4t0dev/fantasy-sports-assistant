@@ -1878,6 +1878,172 @@ def _depth_moves(roster, pool, roster_positions, used_targets, used_drops, limit
     return moves
 
 
+# A week fix is a pickup for one game week, so it offers alternatives - pick one
+# - rather than a plan of several moves.
+WEEK_FIX_OPTIONS = 2
+# Free agents worth pricing exactly; the rest cannot beat these on gain.
+WEEK_FIX_POOL = 8
+
+
+def on_waivers(league, week, now_ms=None):
+    """Players Sleeper still holds on waivers: dropped within `waiver_clear_days`.
+
+    They cannot be added on the spot, and a claim only clears on the waiver
+    day - for a hole in this week's lineup that is usually after the game.
+    """
+    if not week:
+        return set()
+    days = ((league or {}).get("settings") or {}).get("waiver_clear_days")
+    days = 2 if days is None else days
+    now_ms = now_ms or time.time() * 1000
+    held = set()
+    for rnd in {week, max(1, week - 1)}:
+        for tx in sleeper_api.get_transactions(league["league_id"], rnd) or []:
+            if tx.get("status") != "complete" or not tx.get("drops"):
+                continue
+            if now_ms - (tx.get("status_updated") or 0) < days * 86_400_000:
+                held.update(str(pid) for pid in tx["drops"])
+    return held
+
+
+def _hole_text(player):
+    if player is None:
+        return "einen leeren Startplatz"
+    why = ("Bye" if player.get("bye")
+           else (player.get("injury") or {}).get("status") or f"{_week_value(player):.1f} Pkt")
+    return f"{player['name']} ({why})"
+
+
+def _drop_evidence(player):
+    """What makes this drop cheap, in the terms a manager checks it by."""
+    parts = []
+    status = (player.get("injury") or {}).get("status")
+    if status:
+        parts.append(status)
+    if player.get("pts_season") is not None:
+        parts.append(f"Saisonprognose {player['pts_season']:.0f} Pkt")
+    if player.get("age"):
+        parts.append(f"{player['age']} J.")
+    return ", ".join(parts) or f"{player.get('pts') or 0:.0f} Pkt"
+
+
+def _metric_text(value, metric):
+    return f"{value:.0f} DVS" if metric == "dvs" else f"{value:.0f} Pkt"
+
+
+def week_fix_moves(roster, available, roster_positions, current, levels, needs=None,
+                   profile=DYNASTY, limits=None, held=frozenset(), open_spot=False):
+    """Free agents who fix *this week's* lineup, paid for with a drop that
+    costs nothing beyond this week.
+
+    The waiver plan judges a pickup over the coming weeks, which is right for
+    building a roster and blind to the one week where a starter is out with
+    nobody behind him - Hurts out in a superflex league is a zero in the
+    lineup, not a reason to restructure the roster. This answers that week:
+
+    - only players who can be added right now: a free agent whose game has not
+      started, not one still on waivers (a claim clears too late);
+    - only a gain the lineup check itself calls worth acting on;
+    - only a drop that does no lasting harm: never protected, never a season
+      starter, never depth his position still needs, never above his
+      position's replacement level, and never worth more than the best
+      player this league's waiver wire offers at his position - and of
+      those the cheapest to lose.
+      With an open active roster spot, no drop at all.
+    """
+    limits = limits or LINEUP_THRESHOLDS["nfl"]
+    min_gain = limits["bench_urgent"]
+    base = best_lineup_now(roster, roster_positions, current)["total"]
+
+    candidates = []
+    for target in available:
+        if target.get("locked") or target["id"] in held or not (target.get("pts_week") or 0) > 0:
+            continue
+        gain = best_lineup_now(roster + [target], roster_positions, current)["total"] - base
+        if gain >= min_gain:
+            candidates.append((gain, target))
+    if not candidates:
+        return []
+    candidates.sort(key=lambda c: -c[0])
+
+    droppable = []
+    metric = profile["depth_metric"]
+    # What this league's waiver wire offers per position right now, in the
+    # format's own currency (dynasty value, or points in redraft).
+    wire = {}
+    for p in available:
+        wire[p["pos"]] = max(wire.get(p["pos"], 0), p.get(metric) or 0)
+    if not open_spot:
+        season_starters = {p["id"] for _, p in
+                           lineup.build_lineup(roster, roster_positions, _start_value) if p}
+        reserved = depth_reserves(roster, roster_positions, levels, needs, profile)
+        for p in roster:
+            if p.get("protected") or p.get("locked") or p["id"] in season_starters:
+                continue
+            if (p.get("pts") or 0) >= (levels or {}).get(p["pos"], {}).get("pts", 0):
+                continue
+            # Dynasty and keeper: points now are not the whole of a player.
+            # One who holds value above what the league starts is not a free
+            # drop for one week.
+            if metric == "dvs" and _dvs_edge(p, levels, "dvs") > 0:
+                continue
+            # The test that makes this league-specific: the replacement level
+            # is the league's last *starter*, and in a deep dynasty league
+            # plenty of stashes worth keeping sit below that. A drop is free
+            # only if the wire offers his equal at his position today - the
+            # thinner the wire, the less is droppable.
+            if (p.get(metric) or 0) > wire.get(p["pos"], 0):
+                continue
+            droppable.append(p)
+        droppable.sort(key=lambda p: _dvs_edge(p, levels, metric))
+
+    moves = []
+    for _, target in candidates[:WEEK_FIX_POOL]:
+        if len(moves) >= WEEK_FIX_OPTIONS:
+            break
+        drop, after = None, None
+        if open_spot:
+            after = best_lineup_now(roster + [target], roster_positions, current)
+        else:
+            for candidate in droppable:
+                blocked = reserved.get(candidate["id"], set())
+                if blocked and not (blocked & target["elig"]):
+                    continue
+                trial = best_lineup_now([p for p in roster if p["id"] != candidate["id"]]
+                                        + [target], roster_positions, current)
+                if trial["total"] - base >= min_gain:
+                    drop, after = candidate, trial
+                    break
+            if drop is None:
+                continue
+        gain = round(after["total"] - base, 1)
+        swap = next((c for c in lineup_changes(current, after["slots"], _week_value)
+                     if c["in"]["id"] == target["id"]), None)
+        out = swap["out"] if swap else None
+        slot = next((seat["slot"] for seat in current if out
+                     and (seat.get("player") or {}).get("id") == out["id"]),
+                    swap["slot"] if swap else None)
+        why = [f"Füllt diese Woche {_hole_text(out)}: +{gain} Pkt in der Aufstellung.",
+               "Sofort als Free Agent holbar, kein FAAB."]
+        why.append(f"Raus: {drop['name']} ({_drop_evidence(drop)}) - kein Stammspieler, "
+                   f"nicht geschützt, und der Waiver Wire dieser Liga bietet gerade "
+                   f"gleichwertigen Ersatz ({drop['pos']} bis {_metric_text(wire.get(drop['pos'], 0), metric)})."
+                   if drop else "Ein aktiver Kaderplatz ist frei: kein Drop nötig.")
+        moves.append({
+            "kind": "week",
+            "add": target,
+            "drop": drop,
+            "out": _strip_one(out),
+            "slot": slot,
+            "gain": gain,
+            "reason": " ".join(why),
+            "faab": None,
+            "balance": {"pos_in": target["pos"], "pos_out": drop["pos"] if drop else None,
+                        "lineup_gain": gain, "starts": True, "empty_slots": []},
+        })
+    return moves
+
+
 def _signed(value):
     return f"{value:+.0f}"
 
@@ -2467,6 +2633,21 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
     state = sleeper_api.get_state(sport) or {}
     activity = signals.league_activity(league_id, state.get("week") or 1, players)
 
+    # This week's holes, priced for this week only. Off-season there is no week.
+    week_fixes = []
+    if weekly:
+        try:
+            held = on_waivers(league_info, weekly.get("week"))
+        except Exception as e:  # noqa: BLE001 - without it, assume nobody is held
+            print(f"Waiver status failed: {e}")
+            held = set()
+        planned = {r["add"]["id"] for r in recommendations}
+        week_fixes = week_fix_moves(
+            my_players_stats, [p for p in available if p["id"] not in planned],
+            roster_positions, current_lineup(my_roster, roster_positions, my_players_stats),
+            levels, needs, profile, _thresholds(weekly), held,
+            open_spot=len(my_players_stats) < len(roster_positions))
+
     lineup_now = lineup.lineup_report(my_players_stats, roster_positions, _start_value)
 
     return {
@@ -2484,6 +2665,11 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
         "smart_recommendations": [
             {**rec, "drop": _strip_one(rec["drop"]), "add": _strip_one(rec["add"])}
             for rec in recommendations
+        ],
+        # Pick one: pickups that fill a hole in this week's lineup.
+        "week_fixes": [
+            {**fix, "drop": _strip_one(fix["drop"]), "add": _strip_one(fix["add"])}
+            for fix in week_fixes
         ],
         "roster_needs": needs,
         "roster_depth": roster_depth,
@@ -3192,16 +3378,21 @@ def _move_summary(rec):
     add, drop = rec["add"], rec["drop"]
 
     def side(p):
+        if p is None:
+            return None
         return {"id": p["id"], "name": p["name"], "pos": p["pos"], "team": p["team"],
                 "per_week": round((p.get("pts") or 0) / (p.get("pace_weeks") or PACE_UNIT[0]), 1)
                 if p.get("pts_season") is not None else None,
+                "pts_week": p.get("pts_week"),
                 "injury": p.get("injury")}
 
     return {"kind": rec["kind"], "add": side(add), "drop": side(drop),
             "reason": rec["reason"], "faab": rec.get("faab"),
             "lineup_gain": (rec.get("balance") or {}).get("lineup_gain"),
             "edge_gain": (rec.get("balance") or {}).get("edge_gain"),
-            "edge_unit": (rec.get("balance") or {}).get("edge_unit")}
+            "edge_unit": (rec.get("balance") or {}).get("edge_unit"),
+            # Week fixes: whose seat it fills.
+            "out": side(rec.get("out")), "slot": rec.get("slot")}
 
 
 def waiver_overview_api(username, sport="nfl"):
@@ -3246,14 +3437,15 @@ def waiver_overview_api(username, sport="nfl"):
         moves = [_move_summary(r) for r in result["smart_recommendations"]]
         entry.update({
             "moves": moves,
+            "week_fixes": [_move_summary(r) for r in result.get("week_fixes") or []],
             "lineup_moves": sum(1 for m in moves if m["kind"] == "lineup"),
             "moves_note": result.get("moves_note"),
             "faab": result["faab"],
             "needs": [{"pos": n["pos"], "severity": n["severity"], "label": n.get("label")}
                       for n in result["roster_needs"] if n["severity"] >= 2],
         })
-    out.sort(key=lambda e: (e["skipped"] is not None, -e["lineup_moves"],
-                            -len(e["moves"]), e["name"] or ""))
+    out.sort(key=lambda e: (e["skipped"] is not None, not e.get("week_fixes"),
+                            -e["lineup_moves"], -len(e["moves"]), e["name"] or ""))
     return {"leagues": out}
 
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { WaiverLeague, WaiverMove, WaiverMoveSide } from "@/lib/types";
 import { InjuryBadge, PosBadge } from "@/components/PlayerBadges";
+import { WeekFixes } from "@/components/WeekFixes";
 
 // The waiver half of the weekly overview: every league's move plan on one
 // page, so a Tuesday evening does not mean opening nine waiver boards.
@@ -54,10 +55,12 @@ function Move({ move }: { move: WaiverMove }) {
           <span className="text-[10px] font-bold text-green-400 w-9 shrink-0">ADD</span>
           <Side side={move.add} tone="text-white" />
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-red-400 w-9 shrink-0">DROP</span>
-          <Side side={move.drop} tone="text-gray-400" />
-        </div>
+        {move.drop && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-red-400 w-9 shrink-0">DROP</span>
+            <Side side={move.drop} tone="text-gray-400" />
+          </div>
+        )}
       </div>
       <details className="text-[11px] text-gray-400">
         <summary className="cursor-pointer list-none select-none hover:text-gray-200">▸ Warum?</summary>
@@ -97,6 +100,7 @@ function LeagueWaivers({ league, linkParams }: { league: WaiverLeague; linkParam
           Waiver-Seite →
         </Link>
       </div>
+      <WeekFixes fixes={league.week_fixes} />
       {league.moves_note && <p className="text-[11px] text-gray-500">{league.moves_note}</p>}
       {league.moves.length > 0 ? (
         <ul className="space-y-2">
@@ -118,7 +122,9 @@ export function waiverSummary(leagues: WaiverLeague[]): string {
   const lineupMoves = upgrade.reduce((n, l) => n + l.lineup_moves, 0);
   const depthMoves = active.reduce((n, l) => n + l.moves.length, 0) - lineupMoves;
   const depthLeagues = active.filter((l) => l.moves.length > l.lineup_moves).length;
+  const holes = active.filter((l) => l.week_fixes?.length).length;
   return (
+    (holes ? `Lückenfüller für diese Woche in ${holes} ${holes === 1 ? "Liga" : "Ligen"} · ` : "") +
     `${lineupMoves} Startelf-Upgrade${lineupMoves === 1 ? "" : "s"} in ${upgrade.length} ` +
     `${upgrade.length === 1 ? "Liga" : "Ligen"} · ${depthMoves} Kadertiefe-Moves in ${depthLeagues} Ligen`
   );
@@ -132,8 +138,9 @@ export default function WaiverOverview({
   linkParams: string;
 }) {
   const active = leagues.filter((l) => !l.skipped);
-  const upgrade = active.filter((l) => l.lineup_moves > 0);
-  const depth = active.filter((l) => l.lineup_moves === 0);
+  // A league with a hole this week is open too: that move is for now.
+  const upgrade = active.filter((l) => l.lineup_moves > 0 || l.week_fixes?.length);
+  const depth = active.filter((l) => !(l.lineup_moves > 0 || l.week_fixes?.length));
 
   return (
     <div className="space-y-4">

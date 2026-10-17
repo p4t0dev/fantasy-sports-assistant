@@ -352,13 +352,20 @@ export type WaiverMoveSide = {
   team: string;
   /** Forecast points per week over the horizon; null off-season. */
   per_week: number | null;
+  /** This week's forecast. */
+  pts_week?: number | null;
   injury?: Injury | null;
 };
 
 export type WaiverMove = {
-  kind: "lineup" | "depth";
+  /** "week": fills a hole in this week's lineup only (see `week_fixes`). */
+  kind: "lineup" | "depth" | "week";
   add: WaiverMoveSide;
-  drop: WaiverMoveSide;
+  /** Null for a week fix when an active roster spot is free. */
+  drop: WaiverMoveSide | null;
+  /** Week fix: the starter whose seat it fills, and that seat. */
+  out?: WaiverMoveSide | null;
+  slot?: string | null;
   reason: string;
   faab: Faab | null;
   lineup_gain?: number | null;
@@ -375,6 +382,8 @@ export type WaiverLeague = {
   /** Why the plan is missing when Sleeper did not answer. */
   error?: string | null;
   moves: WaiverMove[];
+  /** Pickups for this week's lineup - alternatives, pick one. */
+  week_fixes?: WaiverMove[];
   lineup_moves: number;
   moves_note?: string | null;
   faab?: { budget: number | null; left: number | null; waiver_type: number | null };
