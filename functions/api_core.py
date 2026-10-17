@@ -2623,6 +2623,12 @@ def best_lineup_now(squad, roster_positions, current, value_of=_week_value):
     fixed_ids = {p["id"] for p in fixed.values()}
     open_seats = [i for i in range(len(slots)) if i not in fixed]
     pool = [p for p in squad if not p.get("locked") and p["id"] not in fixed_ids]
+    # On a tie the man already in the lineup keeps his seat. The matching
+    # takes players in value order and a stable sort leaves ties in roster
+    # order, which read "start Jayden Reed (bye, 0) for Jalen Hurts (out, 0)":
+    # a change with nothing to gain that a manager can only undo.
+    now = {seat["player"]["id"] for seat in current if seat.get("player")}
+    pool.sort(key=lambda p: p["id"] not in now)
 
     seated = [None] * len(slots)
     for i, player in fixed.items():

@@ -68,6 +68,25 @@ class StashTest(unittest.TestCase):
         self.assertNotIn("bench", [k for k, _ in kinds])
 
 
+class LineupTieTest(unittest.TestCase):
+    """Hurts is out (0), Reed on bye (0): nothing to gain, so no change."""
+
+    def lineup(self, reed_pts):
+        squad = [player("reed", "WR", reed_pts), player("hurts", "QB", 0.0),
+                 player("maye", "QB", 19.4)]
+        roster = {"starters": ["maye", "hurts"]}
+        current = api_core.current_lineup(roster, ["QB", "SUPER_FLEX"], squad)
+        report = api_core.best_lineup_now(squad, ["QB", "SUPER_FLEX"], current)
+        return api_core.lineup_changes(current, report["slots"], api_core._week_value)
+
+    def test_a_tie_keeps_the_starter(self):
+        self.assertEqual(self.lineup(0.0), [])
+
+    def test_a_real_gain_still_swaps(self):
+        changes = self.lineup(8.0)
+        self.assertEqual([(c["in"]["id"], c["out"]["id"]) for c in changes], [("reed", "hurts")])
+
+
 class CloseCallTest(unittest.TestCase):
 
     def test_a_player_on_bye_is_no_close_call(self):
