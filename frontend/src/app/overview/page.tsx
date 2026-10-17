@@ -4,11 +4,12 @@ import { useEffect, useState, useSyncExternalStore, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { LineupIssue, Overview, OverviewLeague, Player } from "@/lib/types";
+import type { LineupIssue, Overview, OverviewLeague, Player, WaiverMove } from "@/lib/types";
 import { InjuryBadge, MatchupBadge, PosBadge, startPts } from "@/components/PlayerBadges";
 import { CloseCalls, ForecastDelta, ForecastDetail, LockCalls, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
 import { ActivationOptions, STASH_LABEL } from "@/components/ActivationOptions";
+import { WeekFixes } from "@/components/WeekFixes";
 import WaiverOverview, { waiverSummary } from "@/components/WaiverOverview";
 import { Section, SectionNav, useSections } from "@/components/Section";
 import {
@@ -112,10 +113,13 @@ function LeagueCard({
   league,
   week,
   linkParams,
+  weekFixes,
 }: {
   league: OverviewLeague;
   week: number | null;
   linkParams: string;
+  /** From the waiver half of the snapshot: free agents for this week's holes. */
+  weekFixes?: WaiverMove[];
 }) {
   const tone = SEVERITY_TONE[league.severity] ?? SEVERITY_TONE[1];
   const changes = league.changes ?? [];
@@ -171,6 +175,7 @@ function LeagueCard({
       )}
 
       <ActivationOptions options={league.activations} />
+      <WeekFixes fixes={weekFixes} week={week} />
       <MatchupLine stance={league.matchup} />
       <LockCalls calls={(league.lock_calls ?? []).filter((c) => !c.lock)} />
       <CloseCalls calls={league.close_calls} />
@@ -375,6 +380,9 @@ function OverviewContent() {
               league={league}
               week={data.week}
               linkParams={linkParams}
+              weekFixes={
+                data.waivers?.leagues.find((w) => w.league_id === league.league_id)?.week_fixes
+              }
             />
           ))}
         </div>

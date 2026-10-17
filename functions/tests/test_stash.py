@@ -68,6 +68,101 @@ class StashTest(unittest.TestCase):
         self.assertNotIn("bench", [k for k, _ in kinds])
 
 
+class LineupTieTest(unittest.TestCase):
+    """Hurts is out (0), Reed on bye (0): nothing to gain, so no change."""
+
+    def lineup(self, reed_pts):
+        squad = [player("reed", "WR", reed_pts), player("hurts", "QB", 0.0),
+                 player("maye", "QB", 19.4)]
+        roster = {"starters": ["maye", "hurts"]}
+        current = api_core.current_lineup(roster, ["QB", "SUPER_FLEX"], squad)
+        report = api_core.best_lineup_now(squad, ["QB", "SUPER_FLEX"], current)
+        return api_core.lineup_changes(current, report["slots"], api_core._week_value)
+
+    def test_a_tie_keeps_the_starter(self):
+        self.assertEqual(self.lineup(0.0), [])
+
+    def test_a_real_gain_still_swaps(self):
+        changes = self.lineup(8.0)
+        self.assertEqual([(c["in"]["id"], c["out"]["id"]) for c in changes], [("reed", "hurts")])
+
+
+def fa(pid, pos, week, pace, dvs, **extra):
+    """A waiver-board entry: `pts` is the season-scale pace, `pts_week` this week."""
+    return {**player(pid, pos, week), "pts": pace, "dvs": dvs, **extra}
+
+
+class WeekFixTest(unittest.TestCase):
+    """Hurts is out and nobody on the bench can play QB: a free agent fills
+    the week, paid for with a drop that costs nothing beyond it."""
+
+    POSITIONS = ["QB", "SUPER_FLEX", "WR", "BN", "BN"]
+    LEVELS = {"QB": {"pts": 100, "dvs": 150}, "WR": {"pts": 100, "dvs": 150}}
+
+    def roster(self, junk_dvs=40):
+        return [
+            fa("maye", "QB", 19.4, pace=300, dvs=400),
+            fa("hurts", "QB", 0.0, pace=250, dvs=350, protected="Fällt nur kurz aus — halten"),
+            fa("wr1", "WR", 12.0, pace=200, dvs=300),
+            fa("rookie", "WR", 0.0, pace=10, dvs=120, protected="Junges Asset mit Draft-Kapital — halten"),
+            fa("junk", "WR", 0.0, pace=8, dvs=junk_dvs),
+        ]
+
+    def fixes(self, roster=None, available=None, held=frozenset(), open_spot=False):
+        roster = roster or self.roster()
+        current = api_core.current_lineup({"starters": ["maye", "hurts", "wr1"]},
+                                          self.POSITIONS, roster)
+        available = available if available is not None else [
+            fa("huntley", "QB", 13.0, pace=60, dvs=50),
+            fa("played", "QB", 20.0, pace=60, dvs=50, locked=True),
+            fa("held", "QB", 18.0, pace=60, dvs=50),
+            # On the wire, not playing this week: what "junk" can be replaced by.
+            fa("spare_wr", "WR", 0.0, pace=10, dvs=60),
+        ]
+        return api_core.week_fix_moves(roster, available, self.POSITIONS, current, self.LEVELS,
+                                       profile=api_core.DYNASTY, held=held, open_spot=open_spot)
+
+    def test_a_free_agent_fills_the_hole_for_the_cheapest_drop(self):
+        fixes = self.fixes(held={"held"})
+        self.assertEqual([(f["add"]["id"], f["drop"]["id"]) for f in fixes], [("huntley", "junk")])
+        self.assertEqual(fixes[0]["gain"], 13.0)
+        self.assertEqual((fixes[0]["out"]["id"], fixes[0]["slot"]), ("hurts", "SUPER_FLEX"))
+
+    def test_players_who_cannot_be_added_now_are_skipped(self):
+        added = {f["add"]["id"] for f in self.fixes(held={"held"})}
+        self.assertNotIn("played", added)
+        self.assertNotIn("held", added)
+
+    def test_no_drop_with_value_above_replacement(self):
+        self.assertEqual(self.fixes(roster=self.roster(junk_dvs=200), held={"held"}), [])
+
+    def test_a_thin_wire_protects_the_bench(self):
+        # Deep league: nothing at WR to be had, so even "junk" is worth keeping.
+        thin = [fa("huntley", "QB", 13.0, pace=60, dvs=50)]
+        self.assertEqual(self.fixes(available=thin), [])
+
+    def test_an_open_spot_needs_no_drop(self):
+        fixes = self.fixes(held={"held"}, open_spot=True)
+        self.assertIsNone(fixes[0]["drop"])
+
+    def test_a_small_gain_is_no_reason_to_move(self):
+        self.assertEqual(self.fixes(available=[fa("backup", "QB", 3.0, pace=20, dvs=10)]), [])
+
+
+class OnWaiversTest(unittest.TestCase):
+
+    def test_recent_drops_are_held_older_ones_are_free(self):
+        day = 86_400_000
+        now = 100 * day
+        txs = {6: [{"status": "complete", "drops": {"recent": 1}, "status_updated": now - day}],
+               5: [{"status": "complete", "drops": {"old": 2}, "status_updated": now - 3 * day},
+                   {"status": "failed", "drops": {"failed": 3}, "status_updated": now - day}]}
+        league = {"league_id": "L", "settings": {"waiver_clear_days": 2}}
+        with mock.patch.object(api_core.sleeper_api, "get_transactions",
+                               side_effect=lambda _, rnd: txs.get(rnd, [])):
+            self.assertEqual(api_core.on_waivers(league, 6, now_ms=now), {"recent"})
+
+
 class CloseCallTest(unittest.TestCase):
 
     def test_a_player_on_bye_is_no_close_call(self):

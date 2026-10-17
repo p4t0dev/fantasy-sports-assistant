@@ -11,6 +11,8 @@ import type {
   LineupSlot,
   RosterDepth,
   LeagueInfo,
+  WaiverMove,
+  WaiverMoveSide,
 } from "@/lib/types";
 import {
   InjuryBadge,
@@ -22,9 +24,16 @@ import {
   SlotBadge,
 } from "@/components/PlayerBadges";
 import NeedCard from "@/components/NeedCard";
+import { WeekFixes } from "@/components/WeekFixes";
 import { Section, SectionNav, useSections } from "@/components/Section";
 import { HorizonDetail, waiverPts } from "@/components/ForecastDetail";
 import { PosFilter, SortBar, sortBy, type SortOption } from "@/components/Controls";
+
+/** A board entry in the shape the shared move components read. */
+function moveSide(p: Player): WaiverMoveSide {
+  return { id: p.id, name: p.name, pos: p.pos, team: p.team, per_week: null,
+           pts_week: p.pts_week, injury: p.injury };
+}
 
 type Balance = {
   pos_in: string;
@@ -57,6 +66,15 @@ type WaiverData = {
     reason: string;
     faab: Faab | null;
     balance: Balance;
+  }[];
+  /** Pickups for this week's lineup only - alternatives, pick one. */
+  week_fixes?: {
+    add: Player;
+    drop: Player | null;
+    out: Player | null;
+    slot: string | null;
+    gain: number;
+    reason: string;
   }[];
   roster_needs: Need[];
   roster_depth: RosterDepth[];
@@ -397,6 +415,22 @@ function WaiversContent() {
             (s.id !== "team" || !!lineup),
         )}
         state={sections}
+      />
+
+      <WeekFixes
+        week={data?.horizon?.weeks?.[0]}
+        fixes={(data?.week_fixes ?? []).map(
+          (f): WaiverMove => ({
+            kind: "week",
+            add: moveSide(f.add),
+            drop: f.drop && moveSide(f.drop),
+            out: f.out && moveSide(f.out),
+            slot: f.slot,
+            reason: f.reason,
+            faab: null,
+            lineup_gain: f.gain,
+          })
+        )}
       />
 
       {needs.length > 0 && (
