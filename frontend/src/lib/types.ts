@@ -73,6 +73,8 @@ export type Player = {
   bye_week?: number | null;
   /** His game this week is over: he can be neither started nor benched. */
   locked?: boolean;
+  /** Parked outside the active roster: cannot start without a roster move. */
+  stash?: "taxi" | "ir";
   score?: number;
   signals?: string[];
   injury?: Injury | null;
@@ -294,8 +296,23 @@ export type LineupChange = {
   out: Player | null;
 };
 
+/** A taxi or IR player who would improve the lineup - at the price of a
+ *  roster move, so never part of the swaps. */
+export type ActivationOption = {
+  player: Player;
+  from: "taxi" | "ir";
+  gain: number;
+  slot: string | null;
+  out: Player | null;
+  /** Active roster is full: someone has to be dropped first. */
+  needs_drop: boolean;
+  /** Past the taxi deadline: the taxi seat stays empty for the season. */
+  permanent: boolean;
+  caveats: string[];
+};
+
 export type LineupIssue = {
-  kind: "empty" | "bye" | "out" | "doubtful" | "questionable" | "bench" | "lock";
+  kind: "empty" | "bye" | "out" | "doubtful" | "questionable" | "bench" | "lock" | "activation";
   /** 3 scores nothing unless fixed, 2 likely costs points, 1 worth a look. */
   severity: number;
   slot: string | null;
@@ -304,6 +321,9 @@ export type LineupIssue = {
   /** "lock": the score to lock, and what the rest of his week is worth. */
   score?: number;
   rest?: number;
+  /** "activation": where he is parked, and whether a drop is needed. */
+  from?: "taxi" | "ir";
+  needs_drop?: boolean;
 };
 
 export type OverviewLeague = {
@@ -318,6 +338,7 @@ export type OverviewLeague = {
   forecast_notes?: ForecastNote[];
   close_calls?: CloseCall[];
   lock_calls?: LockCall[];
+  activations?: ActivationOption[];
   matchup?: MatchupStance | null;
   current_total?: number;
   total?: number;

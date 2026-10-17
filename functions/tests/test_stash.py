@@ -1,0 +1,122 @@
+import os
+import sys
+import unittest
+from unittest import mock
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+import api_core  # noqa: E402
+
+
+def player(pid, pos, pts, **extra):
+    return {"id": pid, "name": pid, "pos": pos, "elig": {pos}, "pts_week": pts, **extra}
+
+
+POSITIONS = ["QB", "WR", "SUPER_FLEX", "BN"]
+ROSTER = {"players": ["qb", "hurts", "wr", "bn", "rookie", "hurt"],
+          "starters": ["qb", "wr", "hurts"],
+          "taxi": ["rookie"], "reserve": ["hurt"]}
+
+
+def league(deadline):
+    return {"settings": {"taxi_deadline": deadline}}
+
+
+class StashTest(unittest.TestCase):
+    """The Year 3 Dynasty case: the SUPERFLEX starter is out, and the only
+    player who could replace him sits on the taxi squad of a full roster."""
+
+    def setUp(self):
+        self.squad = [player("qb", "QB", 18.0), player("hurts", "QB", 0.0),
+                      player("wr", "WR", 12.0), player("bn", "QB", 0.0)]
+        self.stashed = [player("rookie", "WR", 9.6, stash="taxi"),
+                        player("hurt", "WR", 7.0, stash="ir")]
+        self.current = api_core.current_lineup(ROSTER, POSITIONS, self.squad)
+        self.report = api_core.best_lineup_now(self.squad, POSITIONS, self.current)
+
+    def test_taxi_and_ir_are_split_off(self):
+        self.assertEqual(api_core.roster_stash(ROSTER), {"rookie": "taxi", "hurt": "ir"})
+
+    def test_rules_read_a_full_roster_and_a_passed_deadline(self):
+        rules = api_core.activation_rules(league(4), ROSTER, POSITIONS, 6)
+        self.assertTrue(rules["roster_full"])
+        self.assertTrue(rules["taxi_closed"])
+        self.assertFalse(api_core.activation_rules(league(0), ROSTER, POSITIONS, 6)["taxi_closed"])
+        self.assertFalse(api_core.activation_rules(league(4), ROSTER, POSITIONS, 3)["taxi_closed"])
+
+    def test_taxi_player_is_an_option_not_a_swap(self):
+        changes = api_core.lineup_changes(self.current, self.report["slots"], api_core._week_value)
+        self.assertEqual(changes, [])
+        rules = api_core.activation_rules(league(4), ROSTER, POSITIONS, 6)
+        options = api_core.activation_options(self.stashed, self.squad, POSITIONS,
+                                              self.current, self.report, rules)
+        self.assertEqual([o["player"]["id"] for o in options], ["rookie", "hurt"])
+        rookie = options[0]
+        self.assertEqual(rookie["gain"], 9.6)
+        self.assertEqual(rookie["out"]["id"], "hurts")
+        self.assertTrue(rookie["needs_drop"])
+        self.assertTrue(rookie["permanent"])
+        self.assertFalse(options[1]["permanent"])
+
+    def test_activation_is_never_more_than_worth_a_look(self):
+        rules = api_core.activation_rules(league(4), ROSTER, POSITIONS, 6)
+        options = api_core.activation_options(self.stashed, self.squad, POSITIONS,
+                                              self.current, self.report, rules)
+        issues = api_core.lineup_issues(self.current, 0.0, activations=options)
+        kinds = [(i["kind"], i["severity"]) for i in issues]
+        self.assertIn(("activation", 1), kinds)
+        self.assertNotIn("bench", [k for k, _ in kinds])
+
+
+class CloseCallTest(unittest.TestCase):
+
+    def test_a_player_on_bye_is_no_close_call(self):
+        walker = player("walker", "WR", 0.9, spread=5.1)
+        chase = player("chase", "WR", 0.0, spread=9.7, bye=True)
+        calls = api_core.close_calls([{"in": walker, "out": chase}],
+                                     {"kind": "underdog", "margin": -46.2})
+        self.assertEqual(calls, [])
+
+
+def db_player(pos, rank, **extra):
+    return {"position": pos, "fantasy_positions": [pos], "team": "PHI", "age": 26,
+            "years_exp": 4, "search_rank": rank, "status": "Active", "full_name": pos + str(rank),
+            **extra}
+
+
+class WaiverStashTest(unittest.TestCase):
+    """Taxi and IR players are owned but not active: no slot, no depth, and
+    dropping one frees no active spot for a claim."""
+
+    PLAYERS = {"qb": db_player("QB", 10), "wr1": db_player("WR", 20), "wr2": db_player("WR", 30),
+               "bn": db_player("WR", 400), "taxi": db_player("WR", 500, years_exp=0),
+               "ir": db_player("WR", 600, injury_status="IR")}
+    LEAGUE = {"league_id": "L", "roster_positions": ["QB", "WR", "WR", "BN"],
+              "scoring_settings": {}, "settings": {"taxi_deadline": 4}, "total_rosters": 1}
+    ROSTER = {"owner_id": "u", "roster_id": 1, "players": list(PLAYERS),
+              "starters": ["qb", "wr1", "wr2"], "taxi": ["taxi"], "reserve": ["ir"]}
+
+    def analyze(self):
+        inputs = (self.PLAYERS, {}, {}, {}, {}, None)
+        with mock.patch.object(api_core.sleeper_api, "get_rosters", return_value=[self.ROSTER]), \
+             mock.patch.object(api_core.sleeper_api, "get_state", return_value={"week": 6}), \
+             mock.patch.object(api_core.signals, "league_activity", return_value=None):
+            return api_core.analyze_waivers_api("me", "L", "nfl", user={"user_id": "u"},
+                                                league_info=self.LEAGUE, inputs=inputs)
+
+    def test_taxi_and_ir_are_neither_drops_nor_lineup(self):
+        result = self.analyze()
+        drops = {p["id"] for p in result["drop_candidates"]}
+        self.assertEqual(drops, {"qb", "wr1", "wr2", "bn"})
+        self.assertEqual({p["id"] for p in result["stashed"]}, {"taxi", "ir"})
+        seated = {s["player"]["id"] for s in result["lineup"]["slots"] if s["player"]}
+        benched = {p["id"] for p in result["lineup"]["bench"]}
+        self.assertFalse({"taxi", "ir"} & (seated | benched))
+
+    def test_depth_counts_active_players_only(self):
+        wr = next(d for d in self.analyze()["roster_depth"] if d["pos"] == "WR")
+        self.assertEqual(wr["count"], 3)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -68,6 +68,8 @@ ISSUE_TEXT = {
     "doubtful": "{name} ({slot}) ist Doubtful",
     "questionable": "{name} ({slot}) ist Questionable",
     "bench": "Bank projiziert +{gain} Punkte mehr",
+    "lock": "{name} ({slot}) einlocken",
+    "activation": "{name} aktivieren brächte +{gain} (Taxi/IR, Kaderzug nötig)",
 }
 
 
