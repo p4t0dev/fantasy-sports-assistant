@@ -4,7 +4,17 @@ import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { Player, LineupSlot, Injury, LineupChange, CloseCall, LockCall, MatchupStance } from "@/lib/types";
+import type {
+  Player,
+  LineupSlot,
+  Injury,
+  LineupChange,
+  CloseCall,
+  LockCall,
+  MatchupStance,
+  ActivationOption,
+} from "@/lib/types";
+import { ActivationOptions, StashBadge } from "@/components/ActivationOptions";
 import {
   InjuryBadge,
   SignalBadges,
@@ -33,6 +43,10 @@ type LineupData = {
   warnings: { slot: string; player: string; injury: Injury }[];
   close_calls?: CloseCall[];
   lock_calls?: LockCall[];
+  /** Taxi/IR players who would help - each at the price of a roster move. */
+  activations?: ActivationOption[];
+  /** Taxi and IR: on the roster, but not startable without a roster move. */
+  stashed?: Player[];
   matchup?: MatchupStance | null;
   positions: string[];
 };
@@ -391,6 +405,7 @@ function LineupContent() {
 
   const changes = data?.changes ?? [];
   const bench = data?.bench ?? [];
+  const stashed = data?.stashed ?? [];
   const warnings = data?.warnings ?? [];
   const gain = data?.gain ?? 0;
   const week = data?.week ?? null;
@@ -461,6 +476,7 @@ function LineupContent() {
         <div className="mb-3 space-y-2">
           <MatchupLine stance={data?.matchup} />
           <LockCalls calls={data?.lock_calls} />
+          <ActivationOptions options={data?.activations} />
         </div>
 
         {changes.length > 0 && (
@@ -606,6 +622,27 @@ function LineupContent() {
             {bench.length === 0 && (
               <div className="glass-panel p-4 text-center text-gray-500 text-sm">
                 Alle Spieler stehen in der Aufstellung.
+              </div>
+            )}
+            {stashed.length > 0 && (
+              <div className="pt-2 space-y-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                  Taxi &amp; IR — nicht aufstellbar ohne Kaderzug
+                </div>
+                {stashed.map((p) => (
+                  <div
+                    key={p.id}
+                    className="glass-panel p-3 flex items-start justify-between gap-3 opacity-70"
+                  >
+                    <div className="text-sm text-gray-300 flex items-center gap-2 flex-wrap min-w-0">
+                      <StashBadge stash={p.stash} />
+                      <EligBadges player={p} />
+                      {p.name}
+                      <InjuryBadge injury={p.injury} />
+                    </div>
+                    <span className="text-sm text-gray-500 shrink-0">{startPts(p)}</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>

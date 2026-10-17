@@ -47,6 +47,8 @@ type WaiverData = {
    *  instead of opening every one of them. */
   moves_note?: string | null;
   drop_candidates: Player[];
+  /** Taxi and IR: owned, but neither startable nor a drop that frees an active spot. */
+  stashed?: Player[];
   waiver_targets: Player[];
   smart_recommendations: {
     kind: "lineup" | "depth";
@@ -671,6 +673,13 @@ function WaiversContent() {
         >
 
           <SortBar options={DROP_SORTS} active={dropSortId} onPick={setDropSortId} />
+
+          {(data?.stashed?.length ?? 0) > 0 && (
+            <p className="text-xs text-gray-500 mb-2">
+              Ohne Taxi &amp; IR ({data?.stashed?.map((p) => p.name).join(", ")}): ihr Drop macht
+              keinen aktiven Kaderplatz für einen Neuzugang frei.
+            </p>
+          )}
 
           <PosFilter
             positions={dropPositions}

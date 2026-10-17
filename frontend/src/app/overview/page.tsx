@@ -8,6 +8,7 @@ import type { LineupIssue, Overview, OverviewLeague, Player } from "@/lib/types"
 import { InjuryBadge, MatchupBadge, PosBadge, startPts } from "@/components/PlayerBadges";
 import { CloseCalls, ForecastDelta, ForecastDetail, LockCalls, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
+import { ActivationOptions, STASH_LABEL } from "@/components/ActivationOptions";
 import WaiverOverview, { waiverSummary } from "@/components/WaiverOverview";
 import { Section, SectionNav, useSections } from "@/components/Section";
 import {
@@ -75,6 +76,14 @@ function issueText(issue: LineupIssue): React.ReactNode {
         <>
           Auf der Bank liegen{" "}
           <strong className="text-green-400">+{issue.gain}</strong> projizierte Punkte
+        </>
+      );
+    case "activation":
+      return (
+        <>
+          <strong className="text-white">{name}</strong> ({STASH_LABEL[issue.from ?? ""] ?? issue.from})
+          brächte <strong className="text-green-400">+{issue.gain}</strong>
+          {issue.needs_drop ? " — nur mit Entlassung" : " — erst aktivieren"}
         </>
       );
   }
@@ -161,6 +170,7 @@ function LeagueCard({
         </div>
       )}
 
+      <ActivationOptions options={league.activations} />
       <MatchupLine stance={league.matchup} />
       <LockCalls calls={(league.lock_calls ?? []).filter((c) => !c.lock)} />
       <CloseCalls calls={league.close_calls} />

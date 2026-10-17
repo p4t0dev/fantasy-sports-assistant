@@ -2382,8 +2382,13 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
     league_positions = set(lineup.positions_in_use(roster_positions))
 
     # ---- My roster -------------------------------------------------------
-    my_players_stats = []
     my_starters = _starter_ids(my_roster)
+    # Taxi and IR players are owned but not active: they cannot fill a slot,
+    # and dropping one frees a taxi or IR seat, not the active spot a claim
+    # needs. Every league was offering "drop your IR running back" to make
+    # room for an add. They stay out of needs, depth, lineup and drops.
+    stash = roster_stash(my_roster)
+    my_players_stats, stashed = [], []
     for pid in my_player_ids:
         p = players.get(str(pid))
         if not p:
@@ -2393,6 +2398,10 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
                               weekly=weekly, horizon_pts=True,
                               horizon_weights=hw, positions=league_positions,
                               starting=str(pid) in my_starters)
+        if str(pid) in stash:
+            entry["stash"] = stash[str(pid)]
+            stashed.append(entry)
+            continue
         entry["protected"] = (drop_protection(p, entry["dvs"], entry["pts"], sig, levels,
                                               profile, entry["pos"])
                               if sig else None)
@@ -2469,6 +2478,8 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
                        if recommendations and all(r["kind"] == "depth" for r in recommendations)
                        else None),
         "drop_candidates": _strip(my_players_stats[:15]),
+        # Owned, but neither startable nor a drop that makes room for a claim.
+        "stashed": _strip(sorted(stashed, key=lambda p: -p["pts"])),
         "waiver_targets": _strip(sorted(board, key=lambda p: -p["score"])),
         "smart_recommendations": [
             {**rec, "drop": _strip_one(rec["drop"]), "add": _strip_one(rec["add"])}
@@ -2683,6 +2694,10 @@ def close_calls(changes, stance=None, close=forecast.CLOSE_CALL):
         a, b = change.get("in"), change.get("out")
         if not (a and b) or abs((a.get("pts_week") or 0) - (b.get("pts_week") or 0)) >= close:
             continue
+        # A player on bye or ruled out has no week to be steady or wild in:
+        # "take Chase for his ceiling" read that way while Chase was on bye.
+        if any(p.get("bye") or not p.get("pts_week") for p in (a, b)):
+            continue
         sa, sb = _spread_of(a), _spread_of(b)
         call = {"in": a["name"], "out": b["name"],
                 "gap": round(a["pts_week"] - b["pts_week"], 1),
@@ -2728,9 +2743,10 @@ def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_tota
     players, college_data, stats, signals_by_pid, projs, weekly = inputs
     squad = []
     opp_starters = _starter_ids(opp_roster)
+    opp_stash = roster_stash(opp_roster)
     for pid in opp_roster.get("players") or []:
         p = players.get(str(pid))
-        if p:
+        if p and str(pid) not in opp_stash:
             squad.append(_player_entry(pid, p, stats, college_data, signals_by_pid.get(str(pid)),
                                        None, projs=projs, weekly=weekly,
                                        starting=str(pid) in opp_starters))
@@ -2745,7 +2761,7 @@ def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_tota
             "my_total": my_total, "opp_total": round(opp_total, 1)}
 
 
-def lineup_issues(current, gain, limits=None):
+def lineup_issues(current, gain, limits=None, activations=None):
     """What is wrong with the lineup as it is set in Sleeper right now.
 
     Graded 3 (scores nothing unless fixed), 2 (likely costs points), 1 (worth
@@ -2778,6 +2794,12 @@ def lineup_issues(current, gain, limits=None):
     if gain >= limits["bench"]:
         issues.append({"kind": "bench", "slot": None, "player": None, "gain": gain,
                        "severity": 2 if gain >= limits["bench_urgent"] else 1})
+    # Never louder than "worth a look": the gain is real, but it costs a drop
+    # or a taxi seat, and whether that is worth it is the manager's call.
+    for option in activations or []:
+        issues.append({"kind": "activation", "severity": 1, "slot": option["slot"],
+                       "player": option["player"], "gain": option["gain"],
+                       "from": option["from"], "needs_drop": option["needs_drop"]})
     issues.sort(key=lambda i: -i["severity"])
     return issues
 
@@ -2803,6 +2825,92 @@ def lock_calls(current):
     return out
 
 
+def roster_stash(my_roster):
+    """Who sits outside the active roster, and where: "taxi" or "ir".
+
+    Sleeper lists these players in `players` too, but neither can be started -
+    getting one into the lineup is a roster move first, and usually a drop.
+    Treating them as bench bodies is what read "start your taxi rookie" as a
+    one-click swap.
+    """
+    stash = {str(pid): "ir" for pid in (my_roster or {}).get("reserve") or []}
+    stash.update({str(pid): "taxi" for pid in (my_roster or {}).get("taxi") or []})
+    return stash
+
+
+def activation_rules(league, my_roster, roster_positions, week):
+    """What it takes to bring a taxi or IR player onto the active roster.
+
+    The active roster holds `roster_positions` (starters plus BN); taxi and IR
+    are extra seats on top. A full active roster means a drop first. After the
+    taxi deadline (`taxi_deadline`, a week; 0 for none) nobody can be moved
+    onto the taxi squad any more, so a seat emptied by a promotion stays empty
+    for the rest of the season.
+    """
+    settings = (league or {}).get("settings") or {}
+    stash = roster_stash(my_roster)
+    active = sum(1 for pid in (my_roster or {}).get("players") or [] if str(pid) not in stash)
+    deadline = settings.get("taxi_deadline") or 0
+    return {
+        "roster_full": active >= len(roster_positions or []),
+        "taxi_deadline": deadline or None,
+        "taxi_closed": bool(deadline and week and week > deadline),
+    }
+
+
+def activation_options(stashed, pool, roster_positions, current, report, rules, limits=None):
+    """Taxi or IR players who would improve this week's lineup, kept apart
+    from the swaps.
+
+    A swap is a click in Sleeper; this is a roster decision with a price - a
+    drop when the active roster is full, and after the taxi deadline a taxi
+    seat that cannot be refilled. It is offered as an option with that price
+    attached, never as part of the optimal lineup.
+    """
+    limits = limits or LINEUP_THRESHOLDS["nfl"]
+    out = []
+    for player in stashed:
+        if player.get("locked"):
+            continue
+        alt = best_lineup_now(pool + [player], roster_positions, current)
+        gain = round(alt["total"] - report["total"], 1)
+        if gain < limits["bench"]:
+            continue
+        # Paired against the lineup as it is set, not the optimal one: "statt
+        # Jayden Reed" named a bench player the optimizer had only just moved
+        # in, where the manager is looking at Hurts in that seat.
+        swap = next((c for c in lineup_changes(current, alt["slots"], _week_value)
+                     if c["in"]["id"] == player["id"]), None)
+        source = player["stash"]
+        caveats = []
+        if rules["roster_full"]:
+            caveats.append("Aktiver Kader ist voll: dafür musst du einen Spieler entlassen.")
+        if source == "taxi" and rules["taxi_closed"]:
+            caveats.append(f"Taxi-Deadline (W{rules['taxi_deadline']}) ist vorbei: der "
+                           "Taxi-Platz bleibt bis Saisonende leer.")
+        elif source == "taxi" and rules["taxi_deadline"]:
+            caveats.append(f"Bis zur Taxi-Deadline (W{rules['taxi_deadline']}) kannst du "
+                           "den freien Taxi-Platz noch neu besetzen.")
+        elif source == "taxi":
+            caveats.append("Keine Taxi-Deadline: der freie Taxi-Platz lässt sich neu besetzen.")
+        out.append({
+            "player": _strip_one(player),
+            "from": source,
+            "gain": gain,
+            # The seat the outgoing player holds now; the newcomer may land
+            # elsewhere while the lineup shifts around him.
+            "slot": next((seat["slot"] for seat in current if swap and swap["out"]
+                          and (seat.get("player") or {}).get("id") == swap["out"]["id"]),
+                         swap["slot"] if swap else None),
+            "out": swap["out"] if swap else None,
+            "needs_drop": rules["roster_full"],
+            "permanent": source == "taxi" and rules["taxi_closed"],
+            "caveats": caveats,
+        })
+    out.sort(key=lambda o: -o["gain"])
+    return out
+
+
 def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=None):
     """Current lineup, best lineup still possible, and the gap between them.
 
@@ -2810,19 +2918,29 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
     the same answer for the same league.
     """
     players, college_data, stats, signals_by_pid, projs, weekly = inputs
-    squad = []
     my_starters = _starter_ids(my_roster)
+    stash = roster_stash(my_roster)
+    squad, stashed = [], []
     for pid in my_roster.get("players") or []:
         p = players.get(str(pid))
         if not p:
             continue
-        squad.append(_player_entry(pid, p, stats, college_data,
-                                   signals_by_pid.get(str(pid)), None,
-                                   projs=projs, weekly=weekly,
-                                   starting=str(pid) in my_starters))
+        entry = _player_entry(pid, p, stats, college_data,
+                              signals_by_pid.get(str(pid)), None,
+                              projs=projs, weekly=weekly,
+                              starting=str(pid) in my_starters)
+        if str(pid) in stash:
+            entry["stash"] = stash[str(pid)]
+            stashed.append(entry)
+        else:
+            squad.append(entry)
 
     current = current_lineup(my_roster, roster_positions, squad)
     report = best_lineup_now(squad, roster_positions, current)
+    activations = activation_options(
+        stashed, [p for p in squad if not p.get("locked")], roster_positions, current, report,
+        activation_rules(league, my_roster, roster_positions, (weekly or {}).get("week")),
+        _thresholds(weekly))
     starters = {s["player"]["id"] for s in report["slots"] if s["player"]}
 
     slots = []
@@ -2899,8 +3017,10 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
         "forecast_notes": forecast_notes,
         "matchup": stance,
         "close_calls": close_calls(changes, stance, _thresholds(weekly)["close_call"]),
-        "issues": lineup_issues(current, gain, _thresholds(weekly)),
+        "issues": lineup_issues(current, gain, _thresholds(weekly), activations),
         "lock_calls": lock_calls(current),
+        "activations": activations,
+        "stashed": _strip(sorted(stashed, key=lambda p: -_week_value(p))),
         "positions": sorted(lineup.positions_in_use(roster_positions)),
     }
 
@@ -3026,6 +3146,7 @@ def lineup_overview_api(username, sport="nfl"):
         entry.update({
             "issues": analysis["issues"],
             "lock_calls": analysis["lock_calls"],
+            "activations": analysis["activations"],
             "changes": analysis["changes"],
             "forecast_notes": analysis["forecast_notes"],
             "close_calls": analysis["close_calls"],
