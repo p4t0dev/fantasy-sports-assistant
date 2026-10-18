@@ -2534,13 +2534,48 @@ def board_roster(my_roster, inputs, levels, profile, league_positions):
             entry["stash"] = stash[str(pid)]
             stashed.append(entry)
             continue
-        entry["protected"] = (drop_protection(p, entry["dvs"], entry["pts"], sig, levels,
-                                              profile, entry["pos"])
-                              if sig else None)
+        entry["protected"] = ((drop_protection(p, entry["dvs"], entry["pts"], sig, levels,
+                                               profile, entry["pos"])
+                               if sig else None)
+                              or recent_role(entry, levels))
         entry["is_liability"] = (entry["pts"] < levels.get(entry["pos"], {}).get("pts", 0)
                                  and not entry["protected"])
         active.append(entry)
     return active, stashed
+
+
+# The last games that count as "recently", and the snap share of a starter.
+RECENT_GAMES = 2
+RECENT_SNAPS = 0.75
+
+
+def recent_role(entry, levels):
+    """A role the forecast has not caught up with: why he may not be dropped.
+
+    The weekly forecast for receivers is Sleeper's projection alone - the
+    backtest found nothing better - and that projection lags a breakout and
+    drops on a headline. Darius Cooper scored 19.1 and 15.6 on 86 % of the
+    snaps, the Eagles moved a receiver ahead of him on the depth chart, and
+    the board read 4.9 a week and offered him as a free drop. Whether the
+    newcomer takes his snaps is a judgement call; a drop that costs nothing
+    is not.
+    """
+    use = entry.get("usage") or {}
+    weeks = use.get("pts_by_week") or {}
+    recent = [weeks[w] for w in sorted(weeks, key=int)[-RECENT_GAMES:]]
+    pace_weeks = entry.get("pace_weeks")
+    bar = (levels or {}).get(entry.get("pos"), {}).get("pts", 0)
+    avg = sum(recent) / len(recent) if len(recent) == RECENT_GAMES else 0
+    snaps = use.get("snap_pct") or 0
+    if not (pace_weeks and bar):
+        return None
+    week_bar = bar / pace_weeks
+    # A starter's snaps count only with some production behind them: a
+    # blocking tight end plays most snaps and scores nothing.
+    if avg >= week_bar or (snaps >= RECENT_SNAPS and avg >= week_bar / 2):
+        return (f"Zuletzt starke Rolle (Ø {avg:.1f} Pkt in {RECENT_GAMES} Spielen, "
+                f"Snaps {snaps:.0%}) — halten")
+    return None
 
 
 def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info=None,

@@ -91,6 +91,26 @@ class ActivationDropTest(unittest.TestCase):
         self.assertIsNone(api_core.activation_drop(active, starting=set()))
 
 
+class RecentRoleTest(unittest.TestCase):
+    """Darius Cooper: 19.1 and 15.6 on 86 % of the snaps, forecast 4.9 a week."""
+
+    LEVELS = {"WR": {"pts": 170}}  # 10 a week over 17
+
+    def entry(self, weeks, snaps):
+        return {"pos": "WR", "pace_weeks": 17,
+                "usage": {"pts_by_week": weeks, "snap_pct": snaps}}
+
+    def test_a_breakout_is_held(self):
+        e = self.entry({"1": 0.0, "2": 11.1, "3": 0.0, "4": 19.1, "5": 15.6}, 0.855)
+        self.assertIn("Zuletzt starke Rolle", api_core.recent_role(e, self.LEVELS))
+
+    def test_snaps_without_points_are_not_a_role(self):
+        self.assertIsNone(api_core.recent_role(self.entry({"4": 1.0, "5": 2.0}, 0.9), self.LEVELS))
+
+    def test_a_quiet_bench_player_is_not_held(self):
+        self.assertIsNone(api_core.recent_role(self.entry({"4": 3.0, "5": 2.0}, 0.3), self.LEVELS))
+
+
 class LineupTieTest(unittest.TestCase):
     """Hurts is out (0), Reed on bye (0): nothing to gain, so no change."""
 
