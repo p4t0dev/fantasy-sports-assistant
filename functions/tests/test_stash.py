@@ -68,6 +68,29 @@ class StashTest(unittest.TestCase):
         self.assertNotIn("bench", [k for k, _ in kinds])
 
 
+class ActivationDropTest(unittest.TestCase):
+    """Wheely Fun League: Cameron comes up from the taxi squad on a full
+    roster. The drop is the drop list's first name - a teamless free agent -
+    not the starter he pushes out of the lineup."""
+
+    def test_the_most_expendable_unprotected_player_goes(self):
+        active = [
+            fa("cox", "LB", 3.7, pace=60, dvs=90),
+            fa("hemby", "RB", 0.0, pace=0, dvs=110),
+            fa("hankerson", "RB", 0.0, pace=0, dvs=20, team="FA"),
+            fa("rookie", "WR", 0.0, pace=0, dvs=5, protected="Junges Asset mit Draft-Kapital — halten"),
+        ]
+        self.assertEqual(api_core.activation_drop(active, starting={"cox"})["id"], "hankerson")
+
+    def test_never_someone_who_starts_after_the_activation(self):
+        active = [fa("hankerson", "RB", 0.0, pace=0, dvs=20), fa("cox", "LB", 3.7, pace=60, dvs=90)]
+        self.assertEqual(api_core.activation_drop(active, starting={"hankerson"})["id"], "cox")
+
+    def test_none_when_everyone_is_protected(self):
+        active = [fa("rookie", "WR", 0.0, pace=0, dvs=5, protected="halten")]
+        self.assertIsNone(api_core.activation_drop(active, starting=set()))
+
+
 class LineupTieTest(unittest.TestCase):
     """Hurts is out (0), Reed on bye (0): nothing to gain, so no change."""
 

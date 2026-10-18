@@ -306,6 +306,8 @@ export type ActivationOption = {
   out: Player | null;
   /** Active roster is full: someone has to be dropped first. */
   needs_drop: boolean;
+  /** Who to drop for it: the drop list's most expendable player. */
+  drop?: Player | null;
   /** Past the taxi deadline: the taxi seat stays empty for the season. */
   permanent: boolean;
   caveats: string[];
