@@ -2469,6 +2469,11 @@ def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, pro
         "trend": sig["trend"] if sig else None,
         "opportunity": sig["opportunity"] if sig else None,
         "news_days": sig["recency"]["news_days"] if sig else None,
+        # ESPN's headline on him, and a teammate's absence that explains his
+        # numbers (signals.team_context).
+        "news": sig.get("news") if sig else None,
+        "context": ({k: v for k, v in sig["context"].items() if k != "pid"}
+                    if sig and sig.get("context") else None),
     }
     entry.update(_week_fields(pid, player, sig, weekly, proj, horizon_weights, starting))
     if horizon_pts and entry["pts_pace"] is not None:
@@ -2537,11 +2542,34 @@ def board_roster(my_roster, inputs, levels, profile, league_positions):
         entry["protected"] = ((drop_protection(p, entry["dvs"], entry["pts"], sig, levels,
                                                profile, entry["pos"])
                                if sig else None)
+                              or context_hold(entry, sig, levels, profile)
                               or recent_role(entry, levels))
         entry["is_liability"] = (entry["pts"] < levels.get(entry["pos"], {}).get("pts", 0)
                                  and not entry["protected"])
         active.append(entry)
     return active, stashed
+
+
+def context_hold(entry, sig, levels, profile):
+    """Dynasty and keeper: a forecast pressed down by his quarterback's
+    absence is not a verdict on him.
+
+    Hurts on IR took every Eagles receiver's projection with him, and the
+    market dropped them by the hundred thousand. In redraft that is the season
+    as it now stands and the forecast says so. In dynasty the quarterback comes
+    back and so does the receiver - one who was producing before (half a
+    starter's points a week, on his season average) is not a free drop.
+    """
+    context = (sig or {}).get("context")
+    if not context or profile.get("depth_metric") != "dvs":
+        return None
+    avg = (entry.get("usage") or {}).get("avg_pts") or 0
+    bar = (levels or {}).get(entry.get("pos"), {}).get("pts", 0)
+    pace_weeks = entry.get("pace_weeks")
+    if not (bar and pace_weeks) or avg < bar / pace_weeks / 2:
+        return None
+    return (f"Prognose gedrückt, weil {context['name']} ausfällt ({context['status']}) "
+            f"- vorher Ø {avg:.1f} Pkt; in Dynasty halten")
 
 
 # The last games that count as "recently", and the snap share of a starter.

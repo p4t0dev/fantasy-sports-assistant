@@ -6,6 +6,7 @@ decision actually hinges on. None of this data was read anywhere before.
 """
 
 import time
+import news as news_feed
 import sleeper_api
 
 # Sleeper puts the weekly designation in `injury_status`, NOT in `status`
@@ -197,7 +198,46 @@ def recency_signal(player, now_ms):
     }
 
 
-def build_signals(players, sport="nfl", lookback_hours=24, trending=None):
+# Who a team's quarterback carries: his absence presses their numbers down.
+QB_DEPENDENTS = {"RB", "WR", "TE"}
+# Out or worse: the starter does not play this week, possibly longer.
+QB_OUT_AT = 3
+
+
+def team_context(players, injuries, sport="nfl", note=None):
+    """Per team, the starting quarterback when he is out: {team: {...}}.
+
+    The starter is the team's best-ranked quarterback, not depth chart #1 -
+    Sleeper moves the backup up as soon as the starter is ruled out, which is
+    exactly the case to catch. Jalen Hurts on IR with a blood clot sent every
+    Eagles receiver's projection down and his drop count up; read player by
+    player, Darius Cooper looked like a receiver who had stopped producing.
+    """
+    if sport != "nfl":
+        return {}
+    note = note or news_feed.player_note
+    best = {}
+    for pid, p in players.items():
+        team = p.get("team")
+        if p.get("position") != "QB" or not team or not p.get("active", True):
+            continue
+        rank = p.get("search_rank") or 999999
+        if team not in best or rank < best[team][0]:
+            best[team] = (rank, pid)
+    out = {}
+    for team, (_, pid) in best.items():
+        inj = injuries.get(pid) or {}
+        if (inj.get("severity") or 0) < QB_OUT_AT:
+            continue
+        qb = players[pid]
+        out[team] = {"kind": "qb_out", "pid": pid, "name": qb.get("full_name"),
+                     "status": inj.get("status"), "term": inj.get("term"),
+                     "news": note("nfl", qb.get("espn_id"))}
+    return out
+
+
+def build_signals(players, sport="nfl", lookback_hours=24, trending=None, headlines=None,
+                  contexts=None):
     """One signal bundle per player id."""
     now_ms = int(time.time() * 1000)
 
@@ -205,6 +245,10 @@ def build_signals(players, sport="nfl", lookback_hours=24, trending=None):
     depth_index = build_depth_index(players)
     if trending is None:
         trending = fetch_trending(sport, lookback_hours)
+    if headlines is None:
+        headlines = news_feed.league_news(sport)
+    if contexts is None:
+        contexts = team_context(players, injuries, sport)
 
     signals = {}
     for pid, p in players.items():
@@ -220,16 +264,30 @@ def build_signals(players, sport="nfl", lookback_hours=24, trending=None):
         # Sleeper's public API carries no news *text*, only the timestamp of the
         # last update. Recency is therefore the whole of the available news
         # signal - and it was being computed and then dropped on the floor.
+        # The headline itself where ESPN has one; Sleeper's timestamp only
+        # where it does not.
+        story = (headlines.get(str(p.get("espn_id"))) or [None])[0] if p.get("espn_id") else None
         news_days = rec["news_days"]
-        if news_days is not None and news_days <= NEWS_FRESH_DAYS:
+        if story:
+            labels.append("News: %s" % story["headline"])
+        elif news_days is not None and news_days <= NEWS_FRESH_DAYS:
             labels.append("News heute" if news_days == 0
                           else "News vor %d Tag%s" % (news_days, "" if news_days == 1 else "en"))
+
+        context = contexts.get(p.get("team"))
+        if context and (pid == context["pid"]
+                        or not (set(p.get("fantasy_positions") or []) & QB_DEPENDENTS)):
+            context = None
+        if context:
+            labels.insert(0, "QB fällt aus: %s (%s)" % (context["name"], context["status"]))
 
         signals[pid] = {
             "injury": inj,
             "opportunity": opp,
             "trend": trend,
             "recency": rec,
+            "news": story,
+            "context": context,
             "labels": labels,
         }
     return signals

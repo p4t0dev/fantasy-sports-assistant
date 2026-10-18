@@ -23,6 +23,8 @@ export type Injury = {
   label: string | null;
 };
 
+export type NewsItem = { headline: string; days: number };
+
 export type Player = {
   id: string;
   name: string;
@@ -82,6 +84,11 @@ export type Player = {
   trend?: { adds: number; drops: number; net: number; label: string | null };
   /** Days since Sleeper last touched this player's news entry. */
   news_days?: number | null;
+  /** ESPN's latest headline on him (Sleeper ships no news text). */
+  news?: NewsItem | null;
+  /** A teammate's absence that presses his numbers down. */
+  context?: { kind: "qb_out"; name: string; status: string; term?: string | null;
+              news?: NewsItem | null } | null;
   is_upgrade?: boolean;
   protected?: string | null;
   is_liability?: boolean;
