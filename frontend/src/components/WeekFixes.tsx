@@ -25,7 +25,7 @@ export function WeekFixes({ fixes, week }: { fixes?: WaiverMove[]; week?: number
             )}
             {f.out && (
               <span className="text-gray-500">
-                statt {f.out.name}
+                → Startelf für {f.out.name}
                 {f.slot ? ` (${slotLabel(f.slot)})` : ""}
               </span>
             )}

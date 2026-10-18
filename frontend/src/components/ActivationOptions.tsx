@@ -1,5 +1,5 @@
 import type { ActivationOption } from "@/lib/types";
-import { PosBadge, startPts } from "@/components/PlayerBadges";
+import { InjuryBadge, PosBadge, startPts } from "@/components/PlayerBadges";
 import { slotLabel } from "@/lib/positions";
 
 export const STASH_LABEL: Record<string, string> = { taxi: "Taxi", ir: "IR" };
@@ -32,12 +32,21 @@ export function ActivationOptions({ options }: { options?: ActivationOption[] })
             <span className="text-gray-400">{startPts(o.player)}</span>
             {o.out && (
               <span className="text-gray-500">
-                statt {o.out.name}
+                → Startelf für {o.out.name}
                 {o.slot ? ` (${slotLabel(o.slot)})` : ""}
               </span>
             )}
             <span className="text-green-400 font-bold">+{o.gain}</span>
           </div>
+          {o.drop && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              <span className="text-[10px] font-bold text-red-400">DROP</span>
+              <PosBadge pos={o.drop.pos} />
+              <span className="text-gray-400">{o.drop.name}</span>
+              <span className="text-[10px] text-gray-500">{o.drop.team || "ohne Team"}</span>
+              <InjuryBadge injury={o.drop.injury} />
+            </div>
+          )}
           <ul className="text-xs text-gray-400 space-y-0.5">
             {o.caveats.map((c, i) => (
               <li key={i} className={o.permanent && c.includes("Deadline") ? "text-orange-300" : ""}>

@@ -1917,11 +1917,13 @@ def _hole_text(player):
 def _drop_evidence(player):
     """What makes this drop cheap, in the terms a manager checks it by."""
     parts = []
+    if player.get("team") in (None, "", "FA"):
+        parts.append("ohne Team")
     status = (player.get("injury") or {}).get("status")
     if status:
         parts.append(status)
-    if player.get("pts_season") is not None:
-        parts.append(f"Saisonprognose {player['pts_season']:.0f} Pkt")
+    if player.get("pace_weeks"):
+        parts.append(f"Prognose {(player.get('pts') or 0) / player['pace_weeks']:.1f} Pkt/Woche")
     if player.get("age"):
         parts.append(f"{player['age']} J.")
     return ", ".join(parts) or f"{player.get('pts') or 0:.0f} Pkt"
@@ -2497,6 +2499,85 @@ def _model_inputs(sport, scoring_settings, base=None):
     return players, college_data, stats, signals_by_pid, projs, weekly
 
 
+def drop_order(player):
+    """Most expendable first: unprotected before protected, then the lowest
+    forecast, then the lowest dynasty value - a teamless free agent at zero
+    goes ahead of a rookie at zero."""
+    return (player.get("protected") is not None, player.get("pts") or 0, player.get("dvs") or 0)
+
+
+def board_roster(my_roster, inputs, levels, profile, league_positions):
+    """My players as the waiver board values them: forecast pace over the
+    horizon, dynasty value, and why each one may not be dropped.
+
+    Split into the active roster and the stash. Taxi and IR players are owned
+    but not active: they cannot fill a slot, and dropping one frees a taxi or
+    IR seat, not the active spot a claim needs. They stay out of needs, depth,
+    lineup and drops. Shared by the waiver board and the lineup check, so a
+    drop named next to a taxi activation is the one the drop list leads with.
+    """
+    players, college_data, stats, signals_by_pid, projs, weekly = inputs
+    hw = profile["horizon_weights"]
+    my_starters = _starter_ids(my_roster)
+    stash = roster_stash(my_roster)
+    active, stashed = [], []
+    for pid in my_roster.get("players") or []:
+        p = players.get(str(pid))
+        if not p:
+            continue
+        sig = signals_by_pid.get(str(pid))
+        entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs,
+                              weekly=weekly, horizon_pts=True,
+                              horizon_weights=hw, positions=league_positions,
+                              starting=str(pid) in my_starters)
+        if str(pid) in stash:
+            entry["stash"] = stash[str(pid)]
+            stashed.append(entry)
+            continue
+        entry["protected"] = ((drop_protection(p, entry["dvs"], entry["pts"], sig, levels,
+                                               profile, entry["pos"])
+                               if sig else None)
+                              or recent_role(entry, levels))
+        entry["is_liability"] = (entry["pts"] < levels.get(entry["pos"], {}).get("pts", 0)
+                                 and not entry["protected"])
+        active.append(entry)
+    return active, stashed
+
+
+# The last games that count as "recently", and the snap share of a starter.
+RECENT_GAMES = 2
+RECENT_SNAPS = 0.75
+
+
+def recent_role(entry, levels):
+    """A role the forecast has not caught up with: why he may not be dropped.
+
+    The weekly forecast for receivers is Sleeper's projection alone - the
+    backtest found nothing better - and that projection lags a breakout and
+    drops on a headline. Darius Cooper scored 19.1 and 15.6 on 86 % of the
+    snaps, the Eagles moved a receiver ahead of him on the depth chart, and
+    the board read 4.9 a week and offered him as a free drop. Whether the
+    newcomer takes his snaps is a judgement call; a drop that costs nothing
+    is not.
+    """
+    use = entry.get("usage") or {}
+    weeks = use.get("pts_by_week") or {}
+    recent = [weeks[w] for w in sorted(weeks, key=int)[-RECENT_GAMES:]]
+    pace_weeks = entry.get("pace_weeks")
+    bar = (levels or {}).get(entry.get("pos"), {}).get("pts", 0)
+    avg = sum(recent) / len(recent) if len(recent) == RECENT_GAMES else 0
+    snaps = use.get("snap_pct") or 0
+    if not (pace_weeks and bar):
+        return None
+    week_bar = bar / pace_weeks
+    # A starter's snaps count only with some production behind them: a
+    # blocking tight end plays most snaps and scores nothing.
+    if avg >= week_bar or (snaps >= RECENT_SNAPS and avg >= week_bar / 2):
+        return (f"Zuletzt starke Rolle (Ø {avg:.1f} Pkt in {RECENT_GAMES} Spielen, "
+                f"Snaps {snaps:.0%}) — halten")
+    return None
+
+
 def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info=None,
                         inputs=None):
     """Waiver board, needs and move plan for one league.
@@ -2548,32 +2629,9 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
     league_positions = set(lineup.positions_in_use(roster_positions))
 
     # ---- My roster -------------------------------------------------------
-    my_starters = _starter_ids(my_roster)
-    # Taxi and IR players are owned but not active: they cannot fill a slot,
-    # and dropping one frees a taxi or IR seat, not the active spot a claim
-    # needs. Every league was offering "drop your IR running back" to make
-    # room for an add. They stay out of needs, depth, lineup and drops.
-    stash = roster_stash(my_roster)
-    my_players_stats, stashed = [], []
-    for pid in my_player_ids:
-        p = players.get(str(pid))
-        if not p:
-            continue
-        sig = signals_by_pid.get(str(pid))
-        entry = _player_entry(pid, p, stats, college_data, sig, levels, projs=projs,
-                              weekly=weekly, horizon_pts=True,
-                              horizon_weights=hw, positions=league_positions,
-                              starting=str(pid) in my_starters)
-        if str(pid) in stash:
-            entry["stash"] = stash[str(pid)]
-            stashed.append(entry)
-            continue
-        entry["protected"] = (drop_protection(p, entry["dvs"], entry["pts"], sig, levels,
-                                              profile, entry["pos"])
-                              if sig else None)
-        entry["is_liability"] = (entry["pts"] < levels.get(entry["pos"], {}).get("pts", 0)
-                                 and not entry["protected"])
-        my_players_stats.append(entry)
+    my_players_stats, stashed = board_roster(
+        my_roster, (players, college_data, stats, signals_by_pid, projs, weekly),
+        levels, profile, league_positions)
 
     needs = roster_needs(my_players_stats, roster_positions, levels,
                          unit=_pace_unit(weekly))
@@ -2583,7 +2641,7 @@ def analyze_waivers_api(username, league_id, sport="nfl", user=None, league_info
     roster_depth = roster_depth_overview(my_players_stats, roster_positions,
                                          levels, league_positions)
 
-    my_players_stats.sort(key=lambda p: (p["protected"] is not None, p["pts"]))
+    my_players_stats.sort(key=drop_order)
 
     available = []
     for pid, p in players.items():
@@ -3068,10 +3126,13 @@ def activation_options(stashed, pool, roster_positions, current, report, rules, 
         gain = round(alt["total"] - report["total"], 1)
         if gain < limits["bench"]:
             continue
-        # Paired against the lineup as it is set, not the optimal one: "statt
-        # Jayden Reed" named a bench player the optimizer had only just moved
-        # in, where the manager is looking at Hurts in that seat.
-        swap = next((c for c in lineup_changes(current, alt["slots"], _week_value)
+        # Who he pushes out of the *optimal* lineup - the one the option is
+        # added to. Paired against the lineup as set, a league with a dozen
+        # pending changes matched him with whoever was left over: a receiver
+        # "for Brenton Cox (LB)". Ties no longer move anyone (best_lineup_now),
+        # so Hurts, out at zero, is the man he replaces and not a bench body
+        # the optimizer had shuffled in.
+        swap = next((c for c in lineup_changes(report["slots"], alt["slots"], _week_value)
                      if c["in"]["id"] == player["id"]), None)
         source = player["stash"]
         caveats = []
@@ -3089,18 +3150,64 @@ def activation_options(stashed, pool, roster_positions, current, report, rules, 
             "player": _strip_one(player),
             "from": source,
             "gain": gain,
-            # The seat the outgoing player holds now; the newcomer may land
-            # elsewhere while the lineup shifts around him.
-            "slot": next((seat["slot"] for seat in current if swap and swap["out"]
+            # The seat the outgoing player holds in the optimal lineup; the
+            # newcomer may land elsewhere while the lineup shifts around him.
+            # His seat as you set it, if he has one: the optimizer may have
+            # swapped two quarterbacks between QB and SUPERFLEX on the way.
+            "slot": next((seat["slot"] for seat in current + report["slots"]
+                          if swap and swap["out"]
                           and (seat.get("player") or {}).get("id") == swap["out"]["id"]),
                          swap["slot"] if swap else None),
             "out": swap["out"] if swap else None,
             "needs_drop": rules["roster_full"],
+            "drop": None,
+            # Who starts once he is in: the drop must not be one of them.
+            "_starting": {p["id"] for p in (seat["player"] for seat in alt["slots"]) if p},
             "permanent": source == "taxi" and rules["taxi_closed"],
             "caveats": caveats,
         })
     out.sort(key=lambda o: -o["gain"])
     return out
+
+
+def activation_drop(active, starting):
+    """The most expendable active player who is neither protected, nor locked,
+    nor in the lineup the activation produces."""
+    return next((p for p in sorted(active, key=drop_order)
+                 if not p.get("protected") and not p.get("locked")
+                 and p["id"] not in starting), None)
+
+
+def name_activation_drops(activations, my_roster, roster_positions, inputs, league, rosters):
+    """The drop that pays for each activation on a full roster.
+
+    "Dafür musst du einen Spieler entlassen" left the decision to the manager
+    while the waiver page already had an answer at the top of its drop list -
+    a teamless free agent - and the option read as if the starter it pushes
+    out of the lineup were the one to go. Same valuation as that list
+    (`board_roster`, `drop_order`), minus anyone the activation still starts.
+    """
+    weekly = inputs[5]
+    profile = league_profile(league)
+    levels = replacement_levels(
+        rosters, inputs[0], inputs[2], inputs[1], inputs[3],
+        starter_requirements(roster_positions), league.get("total_rosters") or 12,
+        (weekly or {}).get("sport") or "nfl", projs=inputs[4],
+        roster_positions=roster_positions, weekly=weekly,
+        horizon_weights=profile["horizon_weights"])
+    active, _ = board_roster(my_roster, inputs, levels, profile,
+                             set(lineup.positions_in_use(roster_positions)))
+    for option in activations:
+        if not option["needs_drop"]:
+            continue
+        drop = activation_drop(active, option["_starting"])
+        option["drop"] = _strip_one(drop)
+        option["caveats"][0] = (
+            f"Aktiver Kader ist voll. Drop-Vorschlag: {drop['name']} ({_drop_evidence(drop)}) "
+            "- der entbehrlichste Spieler, wie auf der Waiver-Seite."
+            if drop else
+            "Aktiver Kader ist voll, und jeder Kandidat ist geschützt: wen du dafür "
+            "abgibst, entscheide bewusst.")
 
 
 def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=None):
@@ -3133,6 +3240,14 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
         stashed, [p for p in squad if not p.get("locked")], roster_positions, current, report,
         activation_rules(league, my_roster, roster_positions, (weekly or {}).get("week")),
         _thresholds(weekly))
+    if league and rosters and any(o["needs_drop"] for o in activations):
+        try:
+            name_activation_drops(activations, my_roster, roster_positions, inputs,
+                                  league, rosters)
+        except Exception as e:  # noqa: BLE001 - the option stands without a name
+            print(f"Activation drop failed: {e}")
+    for option in activations:
+        option.pop("_starting", None)
     starters = {s["player"]["id"] for s in report["slots"] if s["player"]}
 
     slots = []

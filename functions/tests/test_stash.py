@@ -68,6 +68,49 @@ class StashTest(unittest.TestCase):
         self.assertNotIn("bench", [k for k, _ in kinds])
 
 
+class ActivationDropTest(unittest.TestCase):
+    """Wheely Fun League: Cameron comes up from the taxi squad on a full
+    roster. The drop is the drop list's first name - a teamless free agent -
+    not the starter he pushes out of the lineup."""
+
+    def test_the_most_expendable_unprotected_player_goes(self):
+        active = [
+            fa("cox", "LB", 3.7, pace=60, dvs=90),
+            fa("hemby", "RB", 0.0, pace=0, dvs=110),
+            fa("hankerson", "RB", 0.0, pace=0, dvs=20, team="FA"),
+            fa("rookie", "WR", 0.0, pace=0, dvs=5, protected="Junges Asset mit Draft-Kapital — halten"),
+        ]
+        self.assertEqual(api_core.activation_drop(active, starting={"cox"})["id"], "hankerson")
+
+    def test_never_someone_who_starts_after_the_activation(self):
+        active = [fa("hankerson", "RB", 0.0, pace=0, dvs=20), fa("cox", "LB", 3.7, pace=60, dvs=90)]
+        self.assertEqual(api_core.activation_drop(active, starting={"hankerson"})["id"], "cox")
+
+    def test_none_when_everyone_is_protected(self):
+        active = [fa("rookie", "WR", 0.0, pace=0, dvs=5, protected="halten")]
+        self.assertIsNone(api_core.activation_drop(active, starting=set()))
+
+
+class RecentRoleTest(unittest.TestCase):
+    """Darius Cooper: 19.1 and 15.6 on 86 % of the snaps, forecast 4.9 a week."""
+
+    LEVELS = {"WR": {"pts": 170}}  # 10 a week over 17
+
+    def entry(self, weeks, snaps):
+        return {"pos": "WR", "pace_weeks": 17,
+                "usage": {"pts_by_week": weeks, "snap_pct": snaps}}
+
+    def test_a_breakout_is_held(self):
+        e = self.entry({"1": 0.0, "2": 11.1, "3": 0.0, "4": 19.1, "5": 15.6}, 0.855)
+        self.assertIn("Zuletzt starke Rolle", api_core.recent_role(e, self.LEVELS))
+
+    def test_snaps_without_points_are_not_a_role(self):
+        self.assertIsNone(api_core.recent_role(self.entry({"4": 1.0, "5": 2.0}, 0.9), self.LEVELS))
+
+    def test_a_quiet_bench_player_is_not_held(self):
+        self.assertIsNone(api_core.recent_role(self.entry({"4": 3.0, "5": 2.0}, 0.3), self.LEVELS))
+
+
 class LineupTieTest(unittest.TestCase):
     """Hurts is out (0), Reed on bye (0): nothing to gain, so no change."""
 
