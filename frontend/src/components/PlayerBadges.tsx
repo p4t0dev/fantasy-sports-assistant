@@ -51,27 +51,57 @@ export function OpportunityBadge({ player }: { player: Player }) {
 }
 
 // Sleeper's public API exposes no news text, only the timestamp of the last
-// update — so recency is the entire news signal available, and it is worth
-// showing: a player Sleeper touched today is a player something happened to.
+// update. Where ESPN has a headline on him it is shown instead; otherwise the
+// timestamp still says that something happened to him.
 const NEWS_FRESH_DAYS = 3;
 
+function ago(days: number): string {
+  return days === 0 ? "heute" : days === 1 ? "gestern" : `vor ${days} Tagen`;
+}
+
 export function NewsBadge({ player }: { player: Player }) {
+  if (player.news) {
+    return (
+      <span
+        title={player.news.headline}
+        className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-sky-900/40 text-sky-200 border border-sky-700 max-w-full truncate"
+      >
+        ✎ {ago(player.news.days)}: {player.news.headline}
+      </span>
+    );
+  }
   const days = player.news_days;
   if (days == null || days > NEWS_FRESH_DAYS) return null;
-  const text = days === 0 ? "News heute" : days === 1 ? "News gestern" : `News vor ${days} Tagen`;
   return (
     <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-sky-900/40 text-sky-200 border border-sky-700">
-      ✎ {text}
+      ✎ News {ago(days)}
+    </span>
+  );
+}
+
+/** His quarterback is out: why his forecast and his trend fell. */
+export function ContextBadge({ player }: { player: Player }) {
+  const c = player.context;
+  if (!c) return null;
+  return (
+    <span
+      title={c.news?.headline ?? undefined}
+      className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-900/40 text-amber-200 border border-amber-700 max-w-full truncate"
+    >
+      ⚠ QB fällt aus: {c.name} ({c.status})
+      {c.news ? ` — ${c.news.headline}` : ""}
     </span>
   );
 }
 
 /** Every signal we hold on a player, in one row. */
 export function SignalBadges({ player }: { player: Player }) {
-  const fresh = player.news_days != null && player.news_days <= NEWS_FRESH_DAYS;
-  if (!player.trend?.label && !player.opportunity?.label && !fresh) return null;
+  const fresh =
+    !!player.news || (player.news_days != null && player.news_days <= NEWS_FRESH_DAYS);
+  if (!player.trend?.label && !player.opportunity?.label && !fresh && !player.context) return null;
   return (
     <div className="flex flex-wrap gap-1.5 mt-1.5">
+      <ContextBadge player={player} />
       <TrendBadge player={player} />
       <OpportunityBadge player={player} />
       <NewsBadge player={player} />
