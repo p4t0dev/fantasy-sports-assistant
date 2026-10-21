@@ -228,13 +228,24 @@ export function LockCalls({ calls }: { calls?: LockCall[] }) {
     <ul className="space-y-1 text-xs">
       {calls.map((c) => (
         <li key={c.id} className={c.lock ? "text-emerald-300" : "text-gray-400"}>
-          {c.lock ? "Einlocken" : "Weiterspielen"}: <strong className="text-white">{c.name}</strong>{" "}
-          — letztes Spiel {c.score} Pkt {c.lock ? "≥" : "<"} {c.rest} Restwert der Woche
+          {c.lock ? "Einlocken" : c.via ? "Nicht einlocken" : "Weiterspielen"}:{" "}
+          <strong className="text-white">{c.name}</strong> — letztes Spiel {c.score} Pkt{" "}
+          {c.lock ? (
+            <>≥ {c.open}, was sein Platz ohne Lock noch bringt</>
+          ) : c.via ? (
+            <>
+              &lt; {c.open} mit offenem Platz: <strong className="text-white">{c.via}</strong> übernimmt
+            </>
+          ) : (
+            <>&lt; {c.open} Restwert der Woche</>
+          )}
         </li>
       ))}
       <li className="text-[10px] text-gray-500">
-        Pro Starter zählt ein Spiel pro Woche. Einlocken geht bis zum Beginn seines nächsten Spiels
-        und nur, wenn er im Spiel in der Startelf stand — falls schon eingelockt, ignorieren.
+        Pro Startplatz zählt ein Spiel pro Woche. Ein eingelockter Platz ist für den Rest der Woche
+        zu — abgewogen wird gegen alles, was der Platz offen noch bringen kann, auch Bankspieler mit
+        späteren Spielen. Einlocken geht bis zum Beginn seines nächsten Spiels und nur aus der
+        Startelf — falls schon eingelockt, ignorieren.
       </li>
     </ul>
   );

@@ -1,5 +1,6 @@
 import os
 import json
+import itertools
 import time
 import requests
 import urllib.request
@@ -2919,6 +2920,119 @@ def best_lineup_now(squad, roster_positions, current, value_of=_week_value):
     }
 
 
+# Up to this many open lock-in calls are decided by trying every combination
+# (2^n lineups); beyond it, one call at a time until none improves.
+LOCK_EXHAUSTIVE = 8
+
+
+def _open_lock(player):
+    lock = (player or {}).get("lock")
+    return bool(lock) and not lock["final"] and not player.get("locked")
+
+
+def _lock_variant(player, lock):
+    """The starter as the lineup sees him once his lock-in call is made.
+
+    Locked, his last game counts and he stays in his seat for the rest of the
+    week. Not locked, that game is gone: he is worth his remaining games only,
+    and can be benched like anyone else.
+    """
+    if lock:
+        return {**player, "locked": True, "pts_week": player["lock"]["score"]}
+    return {**player, "pts_week": player["lock"]["rest"]}
+
+
+def _lineup_with_calls(squad, roster_positions, current, calls):
+    variant = {p["id"]: _lock_variant(p, calls[p["id"]]) if p["id"] in calls else p
+               for p in squad}
+    seats = [{**s, "player": variant[s["player"]["id"]] if s.get("player") else None}
+             for s in current]
+    report = best_lineup_now(list(variant.values()), roster_positions, seats)
+    raw = sum(_week_value(s["player"]) for s in report["slots"] if s["player"])
+    return raw, report, seats
+
+
+def best_lineup_with_locks(squad, roster_positions, current):
+    """`best_lineup_now` for NBA Lock-In, with the lock-in calls made as part
+    of the lineup rather than player by player.
+
+    Locking a starter's last game closes his seat for the week: he can no
+    longer be benched, and nobody else can score there. So "lock 17 points"
+    is not a question of his own remaining games (13.4) but of what the seat
+    is worth kept open - a bench guard with three games left may be worth
+    21.8 there. Judged alone, the call read "lock McCain" while the optimizer
+    benched him for that guard: two instructions that cannot both be followed.
+
+    Each open call is tried both ways against the best lineup that goes with
+    it; ties go to locking, a score in hand. Each call then carries `open`,
+    the score at which locking and playing on come out even (what the seat is
+    worth open, knock-on moves included), and `via`, who takes his seat when
+    he is not locked and sits.
+
+    Returns (report, seats, calls): the lineup, the current seats as the
+    calls leave them (a starter played on is worth his remaining games), and
+    {player id: lock?}.
+    """
+    open_ids = [s["player"]["id"] for s in current if _open_lock(s.get("player"))]
+    if not open_ids:
+        return best_lineup_now(squad, roster_positions, current), current, {}
+
+    def score(calls):
+        raw, _, _ = _lineup_with_calls(squad, roster_positions, current, calls)
+        return round(raw, 2), sum(calls.values())
+
+    if len(open_ids) <= LOCK_EXHAUSTIVE:
+        best = max((dict(zip(open_ids, combo))
+                    for combo in itertools.product((True, False), repeat=len(open_ids))),
+                   key=score)
+    else:
+        # Start from each call on its own, then flip whatever still gains.
+        best = {pid: next(s["player"]["lock"]["lock"] for s in current
+                          if s.get("player") and s["player"]["id"] == pid) for pid in open_ids}
+        improved = True
+        while improved:
+            improved = False
+            for pid in open_ids:
+                flipped = {**best, pid: not best[pid]}
+                if score(flipped) > score(best):
+                    best, improved = flipped, True
+
+    total, report, seats = _lineup_with_calls(squad, roster_positions, current, best)
+    # Who comes in for him, paired as the swap list pairs it. A starter who
+    # only changes seats has no one taking his place.
+    heirs = {c["out"]["id"]: c["in"]["name"]
+             for c in lineup_changes(seats, report["slots"], _week_value) if c["out"]}
+    for pid in open_ids:
+        flipped, _, _ = _lineup_with_calls(squad, roster_positions, current,
+                                           {**best, pid: not best[pid]})
+        edge = total - flipped
+        player = next(p for p in squad if p["id"] == pid)
+        lock = player["lock"]
+        # Shared with every copy of him, so badges and issues read the same call.
+        lock.update({
+            "lock": best[pid],
+            "open": round(lock["score"] - edge if best[pid] else lock["score"] + edge, 1),
+            "via": heirs.get(pid),
+        })
+        explain = (player.get("forecast") or {}).get("explain")
+        if explain:
+            explain[:] = [line for line in explain if not line.startswith("Letztes Spiel")]
+            explain.insert(len(explain) - 1, _lock_text(lock))
+    return report, seats, best
+
+
+def _lock_text(lock):
+    """One line on a lock-in call, for the forecast's explanation."""
+    if lock["lock"]:
+        return (f"Letztes Spiel {_fmt1(lock['score'])} ≥ {_fmt1(lock['open'])}, was sein "
+                "Platz ohne Lock noch bringt → jetzt einlocken")
+    if lock.get("via"):
+        return (f"Letztes Spiel {_fmt1(lock['score'])} < {_fmt1(lock['open'])} mit offenem "
+                f"Platz → nicht einlocken, {lock['via']} übernimmt")
+    return (f"Letztes Spiel {_fmt1(lock['score'])} < {_fmt1(lock['open'])} Restwert "
+            "→ nicht einlocken, weiterspielen")
+
+
 # Below this, "start X instead of Y" is a coin flip between two projections and
 # not worth a manager's attention - every league would be flagged every week.
 ISSUE_BENCH_GAIN = 1.5
@@ -3028,8 +3142,8 @@ def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_tota
             squad.append(_player_entry(pid, p, stats, college_data, signals_by_pid.get(str(pid)),
                                        None, projs=projs, weekly=weekly,
                                        starting=str(pid) in opp_starters))
-    opp_total = best_lineup_now(squad, roster_positions,
-                                current_lineup(opp_roster, roster_positions, squad))["total"]
+    opp_total = best_lineup_with_locks(squad, roster_positions,
+                                       current_lineup(opp_roster, roster_positions, squad))[0]["total"]
     users = {u["user_id"]: u.get("display_name") or u.get("username")
              for u in sleeper_api.get_users_in_league(league["league_id"]) or []}
     margin = round(my_total - opp_total, 1)
@@ -3067,7 +3181,8 @@ def lineup_issues(current, gain, limits=None, activations=None):
         lock = player.get("lock")
         if lock and lock["lock"] and not lock["final"]:
             issues.append({"kind": "lock", "severity": 2, "score": lock["score"],
-                           "rest": lock["rest"], **entry})
+                           "rest": lock["rest"], "open": lock.get("open", lock["rest"]),
+                           **entry})
     limits = limits or LINEUP_THRESHOLDS["nfl"]
     if gain >= limits["bench"]:
         issues.append({"kind": "bench", "slot": None, "player": None, "gain": gain,
@@ -3088,7 +3203,9 @@ def lock_calls(current):
     The game a starter just played can be locked until his next one starts,
     and only from a starting slot - Sleeper does not let a bench player lock.
     Whether he was locked earlier in the week the API does not say, so each
-    call holds only if he was not.
+    call holds only if he was not. The calls themselves are made with the
+    lineup (`best_lineup_with_locks`): `open` is what his seat is worth if he
+    is not locked, `via` who takes it then.
     """
     out = []
     for seat in current:
@@ -3098,8 +3215,9 @@ def lock_calls(current):
             continue
         out.append({"slot": seat["slot"], "id": player["id"], "name": player["name"],
                     "lock": lock["lock"], "score": lock["score"], "rest": lock["rest"],
+                    "open": lock.get("open", lock["rest"]), "via": lock.get("via"),
                     "date": lock.get("date")})
-    out.sort(key=lambda c: (not c["lock"], -(c["score"] - c["rest"])))
+    out.sort(key=lambda c: (not c["lock"], -abs(c["score"] - c["open"])))
     return out
 
 
@@ -3263,7 +3381,7 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
             squad.append(entry)
 
     current = current_lineup(my_roster, roster_positions, squad)
-    report = best_lineup_now(squad, roster_positions, current)
+    report, called, _ = best_lineup_with_locks(squad, roster_positions, current)
     activations = activation_options(
         stashed, [p for p in squad if not p.get("locked")], roster_positions, current, report,
         activation_rules(league, my_roster, roster_positions, (weekly or {}).get("week")),
@@ -3322,7 +3440,9 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
          and abs(p["pts_week"] - p["pts_week_base"]) >= FORECAST_NOTE_GAP),
         key=lambda n: (not n["starting"], -abs(n["pts_week"] - n["pts_week_base"])))
 
-    changes = lineup_changes(current, report["slots"], _week_value)
+    # Against the seats as the lock-in calls leave them: a starter who plays on
+    # is benched at his remaining games, not at the night he did not lock.
+    changes = lineup_changes(called, report["slots"], _week_value)
     stance = None
     if league and rosters and weekly:
         try:

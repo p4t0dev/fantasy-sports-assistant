@@ -68,8 +68,8 @@ function issueText(issue: LineupIssue): React.ReactNode {
       return (
         <>
           <strong className="text-white">{name}</strong> ({slot}) einlocken:{" "}
-          <strong className="text-emerald-300">{issue.score}</strong> Pkt im letzten Spiel, der Rest
-          der Woche ist {issue.rest} wert
+          <strong className="text-emerald-300">{issue.score}</strong> Pkt im letzten Spiel, offen
+          bringt sein Platz noch {issue.open ?? issue.rest}
         </>
       );
     case "bench":
