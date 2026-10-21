@@ -146,7 +146,7 @@ export function MatchupBadge({ player }: { player: Player }) {
         </span>
         {player.lock && !player.lock.final && player.lock.lock && (
           <span
-            title={`Letztes Spiel ${player.lock.score} Pkt — mehr als der Rest der Woche erwarten lässt (${player.lock.rest}). Einlocken, falls nicht schon geschehen.`}
+            title={`Letztes Spiel ${player.lock.score} Pkt — mehr, als sein Platz ohne Lock noch bringt (${player.lock.open ?? player.lock.rest}). Einlocken, falls nicht schon geschehen.`}
             className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border bg-emerald-900/40 text-emerald-300 border-emerald-700"
           >
             Einlocken

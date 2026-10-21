@@ -136,6 +136,10 @@ export type LockAdvice = {
   rest: number | null;
   /** No game left: the score stands whatever happens. */
   final: boolean;
+  /** What his seat is worth if he is not locked (knock-on moves included). */
+  open?: number;
+  /** Who takes his seat when he is not locked and sits. */
+  via?: string | null;
   date?: string;
 };
 
@@ -147,6 +151,10 @@ export type LockCall = {
   lock: boolean;
   score: number;
   rest: number;
+  /** What his seat is worth if he is not locked: the bar the score is held to. */
+  open: number;
+  /** Who takes his seat when he is not locked and sits. */
+  via?: string | null;
   date?: string;
 };
 
@@ -327,9 +335,10 @@ export type LineupIssue = {
   slot: string | null;
   player: Player | null;
   gain?: number;
-  /** "lock": the score to lock, and what the rest of his week is worth. */
+  /** "lock": the score to lock, and what his seat is worth kept open. */
   score?: number;
   rest?: number;
+  open?: number;
   /** "activation": where he is parked, and whether a drop is needed. */
   from?: "taxi" | "ir";
   needs_drop?: boolean;

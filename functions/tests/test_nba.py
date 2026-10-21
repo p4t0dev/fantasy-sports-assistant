@@ -189,6 +189,39 @@ class WeekFieldsTest(unittest.TestCase):
         result = api_core._lineup_analysis(roster, ["PG", "BN"], inputs)
         self.assertEqual(result["changes"], [])
 
+    def lock_analysis(self, bench_games):
+        # The starter played 17 last night, his last game is worth 14: alone
+        # that is a lock. The bench guard has `bench_games` still to come.
+        weekly = self.weekly("2026-10-27", {"1": [("2026-10-26", 17.0)]})
+        weekly["games"][2]["1"] = [("2026-10-27", "MIA", 14.0)]
+        weekly["games"][2]["2"] = bench_games
+        roster = {"players": ["1", "2"], "starters": ["1"]}
+        players = {str(i): {"first_name": "Guard", "last_name": name, "position": "PG",
+                            "fantasy_positions": ["PG"], "team": "BOS", "sport": "nba"}
+                   for i, name in ((1, "Starter"), (2, "Bench"))}
+        inputs = (players, {}, {}, {}, {}, weekly)
+        return api_core._lineup_analysis(roster, ["PG", "BN"], inputs)
+
+    def test_a_lock_is_never_called_for_a_starter_the_lineup_benches(self):
+        # Locking 17 closes the seat; kept open, the bench guard is worth more.
+        result = self.lock_analysis([("2026-10-27", "MIA", 22.0), ("2026-10-28", "DET", 22.0)])
+        call = result["lock_calls"][0]
+        self.assertFalse(call["lock"])
+        self.assertEqual(call["via"], "Guard Bench")
+        self.assertGreater(call["open"], 17.0)
+        self.assertEqual([(c["in"]["id"], c["out"]["id"]) for c in result["changes"]], [("2", "1")])
+        self.assertEqual(result["changes"][0]["out"]["pts_week"], 14.0)
+        self.assertNotIn("lock", [i["kind"] for i in result["issues"]])
+
+    def test_a_lock_that_beats_the_open_seat_keeps_him_in(self):
+        result = self.lock_analysis([("2026-10-27", "MIA", 10.0)])
+        call = result["lock_calls"][0]
+        self.assertTrue(call["lock"])
+        self.assertIsNone(call["via"])
+        self.assertEqual(call["open"], 14.0)
+        self.assertEqual(result["changes"], [])
+        self.assertEqual(result["total"], 17.0)
+
 class YouthTest(unittest.TestCase):
 
     def test_nba_prospect_is_held_by_age_where_his_rank_is_low(self):
