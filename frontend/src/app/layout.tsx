@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Barlow, Barlow_Condensed } from "next/font/google";
 import Link from "next/link";
+import ReloadWhenStale from "@/components/ReloadWhenStale";
+import ScrollToTop from "@/components/ScrollToTop";
 import TabBar from "@/components/TabBar";
 import ThemeSwitch from "@/components/ThemeSwitch";
 import UpdateDataButton from "@/components/UpdateDataButton";
@@ -24,6 +26,12 @@ const barlowCondensed = Barlow_Condensed({
 export const metadata: Metadata = {
   title: "Fantasy Sports Assistant",
   description: "Advanced analytics for your Dynasty and Redraft leagues",
+  appleWebApp: {
+    capable: true,
+    title: "Fantasy",
+    // Not black-translucent: its white clock would vanish on the light header.
+    statusBarStyle: "default",
+  },
 };
 
 export const viewport: Viewport = {
@@ -69,6 +77,8 @@ export default function RootLayout({
         </main>
         <VersionFooter />
         <TabBar placement="bottom" />
+        <ReloadWhenStale />
+        <ScrollToTop />
       </body>
     </html>
   );

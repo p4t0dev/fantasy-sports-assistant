@@ -144,6 +144,15 @@ export default function Dashboard() {
     }
   };
 
+  // A fresh start has nothing cached, and from the home screen every start is
+  // fresh: session storage does not outlive the app. Open with the leagues
+  // rather than with a form to submit. Once, so read the store and not `cached`.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- only the "Lädt…" flag; the rest arrives async
+    if (!getSearchSnapshot()) void fetchLeagues();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const linkParams = (extra: Record<string, string>) =>
     new URLSearchParams({ username, sport, ...extra }).toString();
 
@@ -170,6 +179,9 @@ export default function Dashboard() {
                 type="text"
                 name="username"
                 id="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 className="flex-1 min-w-0 block w-full px-3 py-2 rounded-md bg-surface border border-line text-ink placeholder-muted focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                 placeholder="e.g. patrickschmidt"
                 value={username}
@@ -178,7 +190,7 @@ export default function Dashboard() {
               <select
                 value={season}
                 onChange={(e) => setSeason(e.target.value)}
-                className="px-3 py-2 rounded-md bg-surface border border-line text-ink text-sm focus:ring-blue-500 focus:border-blue-500 cursor-pointer"
+                className="px-3 py-2 rounded-md bg-surface border border-line text-ink sm:text-sm focus:ring-blue-500 focus:border-blue-500 cursor-pointer"
               >
                 <option value="all">Alle Saisons</option>
                 <option value="2026">2026</option>
@@ -224,7 +236,7 @@ export default function Dashboard() {
           <form onSubmit={addManualLeague} className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
-              className="flex-1 px-3 py-1.5 rounded-md bg-surface border border-line text-ink text-xs placeholder-muted"
+              className="flex-1 px-3 py-1.5 rounded-md bg-surface border border-line text-ink sm:text-xs placeholder-muted"
               placeholder="Liga ID direkt eingeben (z. B. 1318881290115633152)"
               value={manualId}
               onChange={(e) => setManualId(e.target.value)}
