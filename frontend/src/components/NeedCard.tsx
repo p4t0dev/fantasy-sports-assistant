@@ -36,10 +36,7 @@ export default function NeedCard({ need }: { need: Need }) {
   return (
     <div className={`panel p-4 border-l-4 ${tone}`}>
       <div className="flex justify-between items-center gap-2 mb-2">
-        <div className="flex items-center gap-2">
-          <PosBadge pos={need.pos} className="text-xs px-2 py-1" />
-          <span className="font-bold text-ink text-lg">{need.pos}</span>
-        </div>
+        <PosBadge pos={need.pos} className="text-xs px-2 py-1" />
         <span
           className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase border ${badge}`}
         >
@@ -54,7 +51,7 @@ export default function NeedCard({ need }: { need: Need }) {
           answers are one click away instead of nowhere. */}
       {need.top && need.top.length > 0 && (
         <details className="mt-2 group">
-          <summary className="text-[11px] text-blue-300/80 hover:text-blue-300 cursor-pointer list-none select-none">
+          <summary className="text-[11px] text-muted hover:text-ink cursor-pointer list-none select-none">
             <span className="group-open:hidden">▸ Welche Spieler zählen hier?</span>
             <span className="hidden group-open:inline">▾ Deine besten {need.pos}</span>
           </summary>

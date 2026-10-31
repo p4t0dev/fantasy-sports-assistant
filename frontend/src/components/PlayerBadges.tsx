@@ -223,16 +223,6 @@ export function PointsPill({ player, label = "PROJ" }: { player: Player; label?:
   );
 }
 
-export function PosChip({ pos }: { pos: string }) {
-  return (
-    <div
-      className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center font-bold text-xs border ${posTone(pos).chip}`}
-    >
-      {pos}
-    </div>
-  );
-}
-
 /** The position, in front of the name, in the position's colour.
 
     Used on every list that names players. A change list reading "Rein: Bijan

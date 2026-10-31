@@ -65,7 +65,6 @@ export function PosFilter({
   counts,
   active,
   onPick,
-  tone,
   severityByPos,
   needs,
 }: {
@@ -73,10 +72,10 @@ export function PosFilter({
   counts: (pos: string) => number;
   active: string | null;
   onPick: (pos: string | null) => void;
-  tone: string;
   severityByPos?: Map<string, number>;
   needs?: Need[];
 }) {
+  const tone = "bg-ink text-canvas border-ink";
   return (
     <div className="flex flex-wrap gap-1.5">
       <button

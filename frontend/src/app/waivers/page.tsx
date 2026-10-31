@@ -15,15 +15,23 @@ import type {
   WaiverMoveSide,
 } from "@/lib/types";
 import {
-  InjuryBadge,
   TrendBadge,
   SignalBadges,
-  PosChip,
-  PosBadge,
   EligBadges,
   SlotBadge,
 } from "@/components/PlayerBadges";
 import NeedCard from "@/components/NeedCard";
+import {
+  BoardHead,
+  BoardRow,
+  PageHead,
+  RefreshButton,
+  ScoreBar,
+  Spinner,
+  SwapCard,
+  TABLE,
+  type ScoreTile,
+} from "@/components/PageParts";
 import { WeekFixes } from "@/components/WeekFixes";
 import { Section, SectionNav, useSections } from "@/components/Section";
 import { useRememberLeague } from "@/lib/lastLeague";
@@ -140,7 +148,7 @@ function DepthPill({ depth }: { depth: RosterDepth }) {
   return (
     <span
       title={depth.label}
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border whitespace-nowrap ${DEPTH_TONES[depth.tier]}`}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold border whitespace-nowrap ${DEPTH_TONES[depth.tier]}`}
     >
       {depth.pos}
       <span className="font-bold">{depth.count}</span>
@@ -153,12 +161,10 @@ function FaabPill({ faab }: { faab?: Faab | null }) {
   if (!faab) return null;
   const tone =
     faab.tier === "aggressiv"
-      ? "bg-purple-900/40 text-purple-200 border-purple-600"
-      : faab.tier === "solide"
-      ? "bg-blue-900/40 text-blue-200 border-blue-700"
+      ? "bg-highlight text-on-highlight border-transparent"
       : "bg-raised text-ink-soft border-line";
   return (
-    <span className={`text-xs px-2 py-1 rounded-md border font-semibold whitespace-nowrap ${tone}`}>
+    <span className={`text-xs px-1.5 py-0.5 border font-semibold whitespace-nowrap ${tone}`}>
       {faab.min}–{faab.max} FAAB
       <span className="font-normal opacity-70"> · {faab.tier}</span>
     </span>
@@ -173,46 +179,64 @@ function RosterRow({
   player,
   slot,
   accepts,
-  empty,
 }: {
   player: Player | null;
   slot: string;
   accepts?: string[];
-  empty?: boolean;
 }) {
+  const chip = <SlotBadge slot={slot} accepts={accepts} compact />;
+  if (!player) {
+    return (
+      <BoardRow
+        chip={chip}
+        name="Kein zulässiger Spieler"
+        stats={[null, null]}
+        tint="bg-red-900/10"
+      />
+    );
+  }
   return (
-    <div
-      className={`panel p-3 flex items-start gap-3 ${
-        empty ? "border-l-4 border-l-red-500 bg-red-900/10" : ""
-      }`}
-    >
-      <SlotBadge slot={slot} accepts={accepts} />
-      {player ? (
-        <div className="flex-1 min-w-0 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm text-ink flex items-center gap-2 flex-wrap">
-              <EligBadges player={player} />
-              {player.name}
-              <InjuryBadge injury={player.injury} />
-            </div>
-            <div className="text-xs text-muted">
-              {player.team} • Age {player.age}
-            </div>
-            <SignalBadges player={player} />
-            <HorizonDetail player={player} />
-          </div>
-          <div className="flex flex-col items-end shrink-0">
-            <span className="text-sm font-bold text-blue-300">{waiverPts(player).value}</span>
-            <span className="text-[10px] text-muted uppercase tracking-wider">{waiverPts(player).unit}</span>
-          </div>
-        </div>
-      ) : (
-        <span className="text-red-400 text-sm font-medium self-center">
-          Kein zulässiger Spieler
-        </span>
-      )}
-    </div>
+    <BoardRow
+      chip={chip}
+      name={player.name}
+      injury={player.injury}
+      sub={
+        <>
+          <EligBadges player={player} />
+          <span>
+            {player.team} · Age {player.age}
+          </span>
+        </>
+      }
+      stats={[waiverPts(player).value, player.dvs]}
+      below={
+        <>
+          <SignalBadges player={player} />
+          <HorizonDetail player={player} />
+        </>
+      }
+    />
   );
+}
+
+/** Add or drop in a move: his number at the end, the rest under the line. */
+function moveLine(label: string, player: Player, extra?: React.ReactNode) {
+  return {
+    label,
+    pos: player.pos,
+    name: player.name,
+    injury: player.injury,
+    value: waiverPts(player).value,
+    below: (
+      <>
+        <div>
+          {player.team} · Age {player.age} · {player.dvs} DVS · {waiverPts(player).unit}
+        </div>
+        {extra}
+        <HorizonDetail player={player} />
+      </>
+    ),
+  };
 }
 
 function WaiversContent() {
@@ -303,26 +327,20 @@ function WaiversContent() {
     return (
       <div className="panel p-8 text-center">
         <p className="text-red-400">Username oder league_id fehlt in der URL.</p>
-        <Link href="/" className="mt-4 inline-block text-blue-400 hover:text-blue-300">
+        <Link href="/" className="mt-4 inline-block link">
           ← Zurück zum Dashboard
         </Link>
       </div>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
+  if (loading) return <Spinner />;
 
   if (error) {
     return (
       <div className="panel p-8 text-center">
         <p className="text-red-400">{error}</p>
-        <Link href="/" className="mt-4 inline-block text-blue-400 hover:text-blue-300">
+        <Link href="/" className="mt-4 inline-block link">
           ← Zurück zum Dashboard
         </Link>
       </div>
@@ -334,74 +352,71 @@ function WaiversContent() {
   const faab = data?.faab;
   const rosterDepth = data?.roster_depth ?? [];
   const league = data?.league;
+  const pointsLabel = data?.horizon ? "Ø/WO" : "PROJ";
+  const bestUpgrade = Math.max(
+    0,
+    ...recommendations.filter((r) => r.kind === "lineup").map((r) => r.balance.lineup_gain)
+  );
+  const tiles: ScoreTile[] = [
+    ...(faab?.left != null ? [{ label: "FAAB übrig", value: faab.left }] : []),
+    { label: "Bedarf", value: needs.length },
+    {
+      label: "Upgrade",
+      value: bestUpgrade > 0 ? `+${bestUpgrade}` : "–",
+      hot: bestUpgrade > 0,
+    },
+  ];
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-ink">Waiver Wire Assistant</h1>
-          {/* The league id is a routing detail, not a name. It stays as the
-              fallback for a league Sleeper answers for but does not name. */}
-          <p className="text-muted mt-1">
-            <span className="text-ink font-medium">
-              {league?.name ?? `Liga ${leagueId}`}
-            </span>
-            {league?.teams ? (
-              <span className="text-muted">
-                {" · "}
-                {league.teams} Teams
-                {league.season ? ` · ${league.season}` : ""}
-              </span>
-            ) : null}
-            {faab?.left != null && (
-              <>
-                {" · "}
-                <span className="text-purple-300 font-medium">
-                  {faab.left} von {faab.budget} FAAB übrig
-                </span>
-              </>
-            )}
-          </p>
+    <div className="space-y-6">
+      <PageHead
+        title="Waiver"
+        // The league id is a routing detail, not a name. It stays as the
+        // fallback for a league Sleeper answers for but does not name.
+        sub={
+          <>
+            {league?.name ?? `Liga ${leagueId}`}
+            {league?.teams ? ` · ${league.teams} Teams` : ""}
+            {league?.season ? ` · ${league.season}` : ""}
+          </>
+        }
+        action={
+          <RefreshButton
+            busy={refreshing}
+            onClick={() => {
+              setRefreshing(true);
+              setReloadToken((token) => token + 1);
+            }}
+          />
+        }
+      />
+
+      <ScoreBar label="Stand der Waiver" tiles={tiles} />
+
+      {(data?.profile || data?.horizon?.weeks?.length) && (
+        <div className="space-y-1 text-xs text-muted">
           {data?.profile && (
-            <p className="text-xs text-muted mt-1">
+            <p>
               Strategie: <span className="text-ink font-medium">{data.profile.label}</span>
               {" — "}
               {PROFILE_TEXT[data.profile.key]}
             </p>
           )}
           {data?.horizon?.weeks?.length ? (
-            <p className="text-xs text-muted mt-1">
+            <p>
               Punkte auf dieser Seite: unsere Prognose, Ø pro Woche über W
               {data.horizon.weeks[0]}–{data.horizon.weeks[data.horizon.weeks.length - 1]}{" "}
               {sport === "nba"
                 ? "(Lock-In: ein Spiel pro Woche zählt, mehr Spiele sind mehr Chancen darauf)"
                 : "(Bye zählt 0)"}{" "}
               — dieselbe Prognose wie in der Aufstellung.{" "}
-              <Link href="/prognose" className="text-blue-400 hover:text-blue-300">
+              <Link href="/prognose" className="link">
                 So entsteht sie →
               </Link>
             </p>
           ) : null}
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              setRefreshing(true);
-              setReloadToken((token) => token + 1);
-            }}
-            disabled={refreshing}
-            className="px-4 py-2 bg-ink hover:opacity-85 disabled:opacity-50 disabled:cursor-not-allowed text-canvas rounded-lg transition-colors text-sm font-bold"
-          >
-            {refreshing ? "Aktualisiere…" : "↻ Neu laden"}
-          </button>
-          <Link
-            href={`/lineup?username=${username}&league_id=${leagueId}&sport=${sport}`}
-            className="px-4 py-2 bg-raised hover:bg-raised-2 text-ink rounded-lg transition-colors text-sm font-medium"
-          >
-            Lineup →
-          </Link>
-        </div>
-      </div>
+      )}
 
       <SectionNav
         items={SECTIONS.filter(
@@ -433,7 +448,6 @@ function WaiversContent() {
         <Section
           id="bedarf"
           title="Team-Bedarf"
-          accent="bg-yellow-500"
           meta={`${needs.length} Position${needs.length === 1 ? "" : "en"}`}
           summary={needs.map((n) => `${n.pos}: ${n.label ?? n.kind ?? ""}`).join(" · ")}
           state={sections}
@@ -450,7 +464,6 @@ function WaiversContent() {
         <Section
           id="moves"
           title="Empfohlene Moves"
-          accent="bg-blue-500"
           meta={`${recommendations.length}`}
           summary={recommendations
             .map((r) => `${r.add.name} für ${r.drop.name}`)
@@ -459,107 +472,42 @@ function WaiversContent() {
         >
 
           {data?.moves_note && (
-            <p className="panel p-3 text-sm text-blue-100 border-l-4 border-l-blue-500 bg-blue-900/10 leading-relaxed">
-              {data.moves_note}
-            </p>
+            <p className="text-xs text-muted">{data.moves_note}</p>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {recommendations.map((rec, idx) => (
-              <div
-                key={idx}
-                className="panel p-5 border border-blue-500/30 bg-blue-900/10 flex flex-col gap-4"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span
-                    className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded border ${
-                      rec.kind === "lineup"
-                        ? "text-green-300 border-green-700 bg-green-900/30"
-                        : "text-ink-soft border-line bg-raised"
-                    }`}
-                  >
-                    {rec.kind === "lineup" ? "Startelf-Upgrade" : "Kadertiefe"}
-                  </span>
-                  <FaabPill faab={rec.faab} />
-                </div>
-
-                <p className="text-sm text-blue-100 bg-blue-900/30 p-3 rounded-md border border-blue-800/50 leading-relaxed">
-                  {rec.reason}
-                </p>
-
-                {rec.kind === "lineup" ? (
-                  <p className="text-xs text-muted">
-                    Startaufstellung{" "}
-                    <span className="text-green-400 font-medium">
-                      +{rec.balance.lineup_gain}
-                      {data?.horizon ? " Pkt/Woche" : ""}
+          <div className="space-y-2.5">
+            {recommendations.map((rec, idx) => {
+              const start = rec.kind === "lineup";
+              return (
+                <SwapCard
+                  key={idx}
+                  quiet={!start}
+                  gain={`+${start ? rec.balance.lineup_gain : rec.balance.edge_gain ?? rec.balance.dvs_gain}`}
+                  unit={
+                    start ? (data?.horizon ? "Pkt/Wo" : null) : rec.balance.edge_unit
+                  }
+                  sides={[
+                    moveLine("Add", rec.add, <TrendBadge player={rec.add} />),
+                    moveLine("Drop", rec.drop),
+                  ]}
+                >
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                    <span>
+                      <span className="font-semibold text-ink-soft">
+                        {start ? "Startelf-Upgrade" : "Kadertiefe"}
+                      </span>
+                      {start
+                        ? rec.balance.starts
+                          ? " · steht sofort in der Startelf"
+                          : " · zunächst Bank-Verstärkung"
+                        : " · Wert über Ersatzniveau, verändert die Startelf nicht"}
                     </span>
-                    {rec.balance.starts ? (
-                      <span className="text-muted"> · steht sofort in der Startelf</span>
-                    ) : (
-                      <span className="text-muted"> · zunächst Bank-Verstärkung</span>
-                    )}
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted">
-                    Wert über Ersatzniveau{" "}
-                    <span className="text-green-400 font-medium">
-                      +{rec.balance.edge_gain ?? rec.balance.dvs_gain}
-                      {rec.balance.edge_unit ? ` ${rec.balance.edge_unit}` : ""}
-                    </span>
-                    <span className="text-muted"> · verändert die Startelf nicht</span>
-                  </p>
-                )}
-
-                <div className="flex items-center justify-between gap-3 border-b border-line pb-3">
-                  <div className="flex flex-col gap-1 min-w-0">
-                    <span className="text-xs text-green-400 uppercase font-bold tracking-wider">Add</span>
-                    <span className="text-ink font-medium flex items-center gap-2 flex-wrap">
-                      <PosBadge pos={rec.add.pos} />
-                      {rec.add.name}
-                      <InjuryBadge injury={rec.add.injury} />
-                    </span>
-                    <span className="text-muted text-xs">
-                      {rec.add.team} • Age {rec.add.age}
-                    </span>
-                    <TrendBadge player={rec.add} />
-                    <HorizonDetail player={rec.add} />
+                    <FaabPill faab={rec.faab} />
                   </div>
-                  <div className="flex gap-3 text-right shrink-0">
-                    <div className="flex flex-col">
-                      <span className="text-blue-300 font-bold">{waiverPts(rec.add).value}</span>
-                      <span className="text-[10px] text-muted uppercase">{waiverPts(rec.add).unit}</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-green-400 font-bold">{rec.add.dvs}</span>
-                      <span className="text-[10px] text-muted uppercase">DVS</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex flex-col gap-1 min-w-0">
-                    <span className="text-xs text-red-400 uppercase font-bold tracking-wider">Drop</span>
-                    <span className="text-ink font-medium flex items-center gap-2 flex-wrap">
-                      <PosBadge pos={rec.drop.pos} />
-                      {rec.drop.name}
-                    </span>
-                    <span className="text-muted text-xs">{rec.drop.team}</span>
-                    <HorizonDetail player={rec.drop} />
-                  </div>
-                  <div className="flex gap-3 text-right shrink-0">
-                    <div className="flex flex-col">
-                      <span className="text-ink-soft font-bold">{waiverPts(rec.drop).value}</span>
-                      <span className="text-[10px] text-muted uppercase">{waiverPts(rec.drop).unit}</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-red-400 font-bold">{rec.drop.dvs}</span>
-                      <span className="text-[10px] text-muted uppercase">DVS</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
+                  <p className="text-xs text-ink-soft leading-relaxed">{rec.reason}</p>
+                </SwapCard>
+              );
+            })}
           </div>
         </Section>
       )}
@@ -568,14 +516,13 @@ function WaiversContent() {
         <Section
           id="team"
           title="Mein Team"
-          accent="bg-purple-500"
           meta={
             // In season the board counts in forecast pace (per week x a
             // season's weeks); the lineup total is shown per week, like
             // everything else here.
             data?.horizon
-              ? `Startaufstellung ${(lineup.total / (data.horizon.pace_weeks ?? 17)).toFixed(1)} Pkt/Woche`
-              : `Startaufstellung ${lineup.total} Punkte projiziert`
+              ? `${(lineup.total / (data.horizon.pace_weeks ?? 17)).toFixed(1)} Pkt/Woche`
+              : `${lineup.total} Pkt projiziert`
           }
           summary={rosterDepth.map((d) => `${d.pos} ${d.count}/${d.needed}`).join(" · ")}
           state={sections}
@@ -589,36 +536,26 @@ function WaiversContent() {
             </div>
           )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-muted uppercase tracking-wider">
-                  Startaufstellung
-                </h3>
-                {lineup.slots.map((s, idx) => (
-                  <RosterRow
-                    key={`${s.slot}-${idx}`}
-                    slot={s.slot}
-                    accepts={s.accepts}
-                    player={s.player}
-                    empty={!s.player}
-                  />
-                ))}
-              </div>
-
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-muted uppercase tracking-wider">
-                  Bank ({lineup.bench.length})
-                </h3>
-                {lineup.bench.map((p) => (
-                  <RosterRow key={p.id} slot="BN" player={p} />
-                ))}
-                {lineup.bench.length === 0 && (
-                  <div className="panel p-4 text-center text-muted text-sm">
-                    Alle Spieler stehen in der Aufstellung.
-                  </div>
-                )}
-              </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+            <div className={TABLE}>
+              <BoardHead first="SLOT" stats={[pointsLabel, "DVS"]} />
+              {lineup.slots.map((s, idx) => (
+                <RosterRow key={`${s.slot}-${idx}`} slot={s.slot} accepts={s.accepts} player={s.player} />
+              ))}
             </div>
+
+            <div className={TABLE}>
+              <BoardHead first="BANK" stats={[pointsLabel, "DVS"]} />
+              {lineup.bench.map((p) => (
+                <RosterRow key={p.id} slot="BN" player={p} />
+              ))}
+              {lineup.bench.length === 0 && (
+                <div className="p-4 text-center text-muted text-sm">
+                  Alle Spieler stehen in der Aufstellung.
+                </div>
+              )}
+            </div>
+          </div>
         </Section>
       )}
 
@@ -626,7 +563,6 @@ function WaiversContent() {
         <Section
           id="targets"
           title="Top Targets"
-          accent="bg-green-500"
           meta={`${visibleTargets.length} von ${targets.length}`}
           summary={targets
             .slice(0, 3)
@@ -642,50 +578,41 @@ function WaiversContent() {
             counts={(pos) => targets.filter((t) => t.pos === pos).length}
             active={posFilter}
             onPick={setPosFilter}
-            tone="bg-green-600 text-white border-green-500"
             severityByPos={severityByPos}
             needs={needs}
           />
 
-          <div className="space-y-3">
+          <div className={TABLE}>
+            <BoardHead first="POS" stats={[pointsLabel, "DVS"]} />
             {visibleTargets.map((player) => (
-              <div
+              <BoardRow
                 key={player.id}
-                className="panel p-4 flex justify-between items-start gap-4 border-l-4 border-l-green-500/50"
-              >
-                <div className="flex items-start gap-4 min-w-0">
-                  <PosChip pos={player.pos} />
-                  <div className="min-w-0">
-                    <h4 className="text-ink font-medium flex items-center gap-2 flex-wrap">
-                      {player.name}
-                      <InjuryBadge injury={player.injury} />
-                      {player.is_upgrade && (
-                        <span className="text-[10px] bg-green-600/30 text-green-300 border border-green-700 px-1.5 py-0.5 rounded uppercase font-bold">
-                          Upgrade
-                        </span>
-                      )}
-                    </h4>
-                    <p className="text-sm text-muted">
-                      {player.team} • Age {player.age}
-                    </p>
+                chip={<SlotBadge slot={player.pos} compact />}
+                name={player.name}
+                injury={player.injury}
+                tag={
+                  player.is_upgrade && (
+                    <span className="font-sans not-italic text-[10px] bg-green-600/30 text-green-300 border border-green-700 px-1.5 py-0.5 rounded uppercase font-bold shrink-0">
+                      Upgrade
+                    </span>
+                  )
+                }
+                sub={
+                  <>
+                    <span>
+                      {player.team} · Age {player.age}
+                    </span>
+                    <FaabPill faab={player.faab} />
+                  </>
+                }
+                stats={[waiverPts(player).value, player.dvs]}
+                below={
+                  <>
                     <SignalBadges player={player} />
                     <HorizonDetail player={player} />
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-2 shrink-0">
-                  <FaabPill faab={player.faab} />
-                  <div className="flex gap-3 text-right">
-                    <div className="flex flex-col">
-                      <span className="text-sm font-bold text-blue-300">{waiverPts(player).value}</span>
-                      <span className="text-[10px] text-muted uppercase tracking-wider">{waiverPts(player).unit}</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-sm font-bold text-green-400">{player.dvs}</span>
-                      <span className="text-[10px] text-muted uppercase tracking-wider">DVS</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                  </>
+                }
+              />
             ))}
           </div>
         </Section>
@@ -693,7 +620,6 @@ function WaiversContent() {
         <Section
           id="drops"
           title="Drop-Kandidaten"
-          accent="bg-red-500"
           meta={`${visibleDrops.length} von ${drops.length}`}
           summary={drops
             .slice(0, 3)
@@ -716,54 +642,40 @@ function WaiversContent() {
             counts={(pos) => drops.filter((d) => d.pos === pos).length}
             active={dropFilter}
             onPick={setDropFilter}
-            tone="bg-red-600 text-white border-red-500"
           />
 
-          <div className="space-y-3">
+          <div className={TABLE}>
+            <BoardHead first="POS" stats={[pointsLabel, "DVS"]} />
             {visibleDrops.map((player) => (
-              <div
+              <BoardRow
                 key={player.id}
-                className={`panel p-4 flex justify-between items-start gap-4 ${
-                  player.protected
-                    ? "border-l-4 border-l-amber-500/60 bg-amber-900/5"
-                    : player.is_liability
-                    ? "border-red-500/50 bg-red-900/10"
-                    : ""
-                }`}
-              >
-                <div className="flex items-start gap-4 min-w-0">
-                  <PosChip pos={player.pos} />
-                  <div className="min-w-0">
-                    <h4 className="text-ink font-medium flex items-center gap-2 flex-wrap">
-                      {player.name}
-                      <InjuryBadge injury={player.injury} />
-                      {player.protected && (
-                        <span className="text-[10px] bg-amber-600/30 text-amber-300 border border-amber-700 px-1.5 py-0.5 rounded uppercase font-bold">
-                          Halten
-                        </span>
-                      )}
-                    </h4>
-                    <p className="text-sm text-muted">
-                      {player.team} • Age {player.age} • Exp {player.exp} yr
-                    </p>
+                chip={<SlotBadge slot={player.pos} compact />}
+                name={player.name}
+                injury={player.injury}
+                tint={player.protected ? "bg-amber-900/5" : player.is_liability ? "bg-red-900/10" : ""}
+                tag={
+                  player.protected && (
+                    <span className="font-sans not-italic text-[10px] bg-amber-600/30 text-amber-300 border border-amber-700 px-1.5 py-0.5 rounded uppercase font-bold shrink-0">
+                      Halten
+                    </span>
+                  )
+                }
+                sub={
+                  <span>
+                    {player.team} · Age {player.age} · Exp {player.exp} yr
+                  </span>
+                }
+                stats={[waiverPts(player).value, player.dvs]}
+                below={
+                  <>
                     {player.protected && (
                       <p className="text-xs text-amber-300/90 mt-1">{player.protected}</p>
                     )}
                     <SignalBadges player={player} />
                     <HorizonDetail player={player} />
-                  </div>
-                </div>
-                <div className="flex gap-3 text-right shrink-0">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-blue-300">{waiverPts(player).value}</span>
-                    <span className="text-[10px] text-muted uppercase tracking-wider">{waiverPts(player).unit}</span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-ink">{player.dvs}</span>
-                    <span className="text-[10px] text-muted uppercase tracking-wider">DVS</span>
-                  </div>
-                </div>
-              </div>
+                  </>
+                }
+              />
             ))}
           </div>
         </Section>

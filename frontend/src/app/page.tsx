@@ -11,11 +11,17 @@ import {
   writeSearch,
   ageLabel,
 } from "@/lib/leagueCache";
+import { PageHead, ScoreBar } from "@/components/PageParts";
 
 const SPORTS = [
   { id: "nfl", label: "NFL" },
   { id: "nba", label: "NBA" },
 ];
+
+/** Sleeper's "in_season", "pre_draft". */
+function statusLabel(status: string): string {
+  return status.replace("_", " ");
+}
 
 export default function Dashboard() {
   // The last search is restored from session storage, so coming back from a
@@ -121,7 +127,7 @@ export default function Dashboard() {
     }
   };
 
-  const fetchLeagues = async (e?: React.FormEvent) => {
+  const fetchLeagues = async (e?: React.FormEvent, nextSport = sport) => {
     if (e) e.preventDefault();
     if (!username) return;
 
@@ -130,13 +136,13 @@ export default function Dashboard() {
 
     try {
       const [leaguesData, draftsData] = await Promise.all([
-        apiGet<League[]>("get_user_leagues", { username, season, sport }),
-        apiGet<Draft[]>("get_user_drafts", { username, season, sport }),
+        apiGet<League[]>("get_user_leagues", { username, season, sport: nextSport }),
+        apiGet<Draft[]>("get_user_drafts", { username, season, sport: nextSport }),
       ]);
       const nextLeagues = Array.isArray(leaguesData) ? leaguesData : [];
       const nextDrafts = Array.isArray(draftsData) ? draftsData : [];
       setFetched({ leagues: nextLeagues, drafts: nextDrafts });
-      writeSearch({ username, sport, season, leagues: nextLeagues, drafts: nextDrafts });
+      writeSearch({ username, sport: nextSport, season, leagues: nextLeagues, drafts: nextDrafts });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ein Fehler ist aufgetreten");
     } finally {
@@ -157,18 +163,184 @@ export default function Dashboard() {
     new URLSearchParams({ username, sport, ...extra }).toString();
 
   return (
-    <div className="space-y-8">
-      <div className="text-center py-6 sm:py-12 px-4 sm:px-6 lg:px-8">
-        <h1 className="text-5xl sm:text-6xl font-extrabold text-ink mb-4">
-          Dominate Your Dynasty
-        </h1>
-        <p className="max-w-2xl mx-auto text-xl text-muted">
-          Waiver-Empfehlungen mit Live-Spielernews, Verletzungsstatus und FAAB-Geboten — plus
-          Draft-Analyse auf Basis mehrjähriger Daten.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHead
+        title="Ligen"
+        sub={username}
+        action={
+          <div className="flex shrink-0 border border-line">
+            {SPORTS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                disabled={loading}
+                onClick={() => {
+                  if (s.id === sport) return;
+                  setSportInput(s.id);
+                  setFetched({ leagues: [], drafts: [] });
+                  setExtraLeagues([]);
+                  void fetchLeagues(undefined, s.id);
+                }}
+                className={`px-4 h-11 text-sm font-semibold transition-colors ${
+                  sport === s.id ? "bg-ink text-canvas" : "text-muted hover:text-ink"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
-      <div className="panel p-6 sm:p-8 max-w-xl mx-auto">
+      {overview && (
+        <section className="space-y-2">
+          <ScoreBar
+            label={`Stand${overview.week ? ` Woche ${overview.week}` : ""}`}
+            tiles={[
+              { label: "Dringend", value: urgentCount, hot: urgentCount > 0 },
+              { label: "Hinweise", value: hintCount },
+              { label: "Upgrades", value: upgradeMoves },
+            ]}
+          />
+          <p className="text-xs text-muted">
+            {overview.week ? `Woche ${overview.week} · ` : ""}
+            {urgentCount
+              ? `${urgentCount} ${urgentCount === 1 ? "Aufstellung braucht" : "Aufstellungen brauchen"} Aufmerksamkeit`
+              : "Alle Aufstellungen in Ordnung"}
+            {" · "}
+            {waiverSummary}
+          </p>
+          <p className="flex gap-4 text-sm">
+            <Link href={`/overview?${linkParams({})}`} className="link">
+              Aufstellung →
+            </Link>
+            <Link href={`/overview?${linkParams({})}#waiver`} className="link">
+              Waiver →
+            </Link>
+          </p>
+        </section>
+      )}
+
+      {!loading && leagues.length === 0 && drafts.length === 0 && (
+        <p className="text-center text-muted text-sm">
+          Noch keine Ligen geladen. Username eingeben und „Ligen laden“ drücken.
+        </p>
+      )}
+
+      {(leagues.length > 0 || drafts.length > 0) && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h2 className="headline">Deine Ligen &amp; Drafts</h2>
+            {cachedAt && (
+              <span className="text-xs text-muted">
+                zwischengespeichert {ageLabel(cachedAt)} · „Ligen laden“ holt neu
+              </span>
+            )}
+            {archivedCount > 0 && (
+              <button
+                onClick={() => setShowArchive((v) => !v)}
+                className="ml-auto px-3 py-1 rounded-md text-xs font-semibold border bg-surface text-muted border-line hover:text-ink"
+              >
+                {showArchive
+                  ? `Archiv ausblenden (${archivedCount})`
+                  : `Archiv einblenden (${archivedCount})`}
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {leagues.map((league) => {
+              const leagueDrafts = drafts.filter((d) => d.league_id === league.league_id);
+
+              return (
+                <div
+                  key={league.league_id}
+                  className={`panel overflow-hidden flex flex-col h-full ${
+                    league.archived ? "opacity-60" : ""
+                  }`}
+                >
+                  <div className="px-3 py-2.5 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="font-display font-bold text-xl leading-tight text-ink truncate" title={league.name}>
+                        {league.name}
+                      </h3>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {league.archived && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-bold uppercase bg-raised text-muted border border-line">
+                            Archiv
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <p className="mt-0.5 text-[13px] text-muted">
+                      {league.total_rosters} Teams · {league.season} ·{" "}
+                      <span className="capitalize">{statusLabel(league.status)}</span>
+                    </p>
+                    {(severityByLeague.get(league.league_id) ?? 0) >= 2 && (
+                      <Link
+                        href={`/overview?${linkParams({})}`}
+                        className={`mt-3 inline-flex items-center gap-1 text-xs font-semibold ${
+                          severityByLeague.get(league.league_id) === 3
+                            ? "text-red-300 hover:text-red-200"
+                            : "text-orange-300 hover:text-orange-200"
+                        }`}
+                      >
+                        ⚠ Aufstellung prüfen →
+                      </Link>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 border-t border-line font-display text-[17px] font-semibold uppercase text-center">
+                    <Link href={`/lineup?${linkParams({ league_id: league.league_id })}`} className="py-2 text-ink hover:bg-raised">
+                      Lineup
+                    </Link>
+                    <Link href={`/waivers?${linkParams({ league_id: league.league_id })}`} className="py-2 text-ink hover:bg-raised border-l border-line">
+                      Waiver
+                    </Link>
+                    {leagueDrafts.map((d) => (
+                      <Link
+                        key={d.draft_id}
+                        href={`/draft?${linkParams({ draft_id: d.draft_id })}`}
+                        className="col-span-2 py-2 text-ink hover:bg-raised border-t border-line"
+                      >
+                        Draft · {statusLabel(d.status)}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Drafts that belong to no league in the current list (e.g. mock drafts) */}
+            {drafts
+              .filter((d) => !leagues.some((l) => l.league_id === d.league_id))
+              .map((draft) => (
+                <div
+                  key={draft.draft_id}
+                  className="panel overflow-hidden flex flex-col h-full"
+                >
+                  <div className="px-3 py-2.5 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="font-display font-bold text-xl leading-tight text-ink truncate" title={draft.name}>
+                        {draft.name}
+                      </h3>
+                      <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 text-[10px] font-bold uppercase bg-raised text-muted border border-line">
+                        Mock Draft
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[13px] text-muted capitalize">{statusLabel(draft.status)}</p>
+                  </div>
+                  <Link
+                    href={`/draft?${linkParams({ draft_id: draft.draft_id })}`}
+                    className="py-2 border-t border-line font-display text-[17px] font-semibold uppercase text-center text-ink hover:bg-raised"
+                  >
+                    Draft öffnen
+                  </Link>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      <div className="panel p-4">
         <form onSubmit={fetchLeagues} className="space-y-4">
           <div>
             <label htmlFor="username" className="block text-sm font-medium text-ink-soft">
@@ -182,7 +354,7 @@ export default function Dashboard() {
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
-                className="flex-1 min-w-0 block w-full px-3 py-2 rounded-md bg-surface border border-line text-ink placeholder-muted focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                className="flex-1 min-w-0 block w-full px-3 py-2 rounded-md bg-surface border border-line text-ink placeholder-muted sm:text-sm"
                 placeholder="e.g. patrickschmidt"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -190,7 +362,7 @@ export default function Dashboard() {
               <select
                 value={season}
                 onChange={(e) => setSeason(e.target.value)}
-                className="px-3 py-2 rounded-md bg-surface border border-line text-ink sm:text-sm focus:ring-blue-500 focus:border-blue-500 cursor-pointer"
+                className="px-3 py-2 rounded-md bg-surface border border-line text-ink sm:text-sm cursor-pointer"
               >
                 <option value="all">Alle Saisons</option>
                 <option value="2026">2026</option>
@@ -200,39 +372,17 @@ export default function Dashboard() {
               <button
                 type="submit"
                 disabled={loading || !username}
-                className="inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md text-sm font-medium text-canvas bg-ink hover:opacity-85 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-bold text-canvas bg-ink hover:opacity-85 disabled:opacity-50"
               >
                 {loading ? "Lädt…" : "Ligen laden"}
               </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted">Sportart:</span>
-            <div className="bg-surface rounded-lg p-1 flex border border-line">
-              {SPORTS.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => {
-                    setSportInput(s.id);
-                    setFetched({ leagues: [], drafts: [] });
-                    setExtraLeagues([]);
-                  }}
-                  className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    sport === s.id ? "bg-ink text-canvas" : "text-muted hover:text-ink"
-                  }`}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
           {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
         </form>
 
-        <div className="mt-6 pt-6 border-t border-line">
+        <div className="mt-4 pt-4 border-t border-line">
           <form onSubmit={addManualLeague} className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
@@ -251,179 +401,6 @@ export default function Dashboard() {
           </form>
         </div>
       </div>
-
-      {overview && (
-        <div
-          className={`panel max-w-xl mx-auto p-4 flex items-center gap-4 border-l-4 ${
-            urgentCount ? "border-l-red-500 bg-red-900/10" : "border-l-green-500 bg-green-900/10"
-          }`}
-        >
-          <div className="text-2xl">{urgentCount ? "⚠" : "✓"}</div>
-          <div className="flex-1 text-sm space-y-0.5">
-            <div className="text-ink font-bold">
-              Wochenübersicht{overview.week ? ` · Woche ${overview.week}` : ""}
-            </div>
-            <div className="text-muted">
-              {urgentCount
-                ? `${urgentCount} ${urgentCount === 1 ? "Aufstellung braucht" : "Aufstellungen brauchen"} Aufmerksamkeit`
-                : "Alle Aufstellungen in Ordnung"}
-              {hintCount > 0 && ` · ${hintCount} mit Hinweisen`}
-            </div>
-            <div className="text-muted">
-              {waiverSummary}
-            </div>
-          </div>
-          <div className="flex flex-col items-end gap-1 text-sm font-medium shrink-0">
-            <Link href={`/overview?${linkParams({})}`} className="text-blue-400 hover:text-blue-300">
-              Aufstellung →
-            </Link>
-            <Link
-              href={`/overview?${linkParams({})}#waiver`}
-              className="text-blue-400 hover:text-blue-300"
-            >
-              Waiver →
-            </Link>
-          </div>
-        </div>
-      )}
-
-      {!loading && leagues.length === 0 && drafts.length === 0 && (
-        <p className="text-center text-muted text-sm">
-          Noch keine Ligen geladen. Username eingeben, Sportart wählen und „Ligen laden“ drücken.
-        </p>
-      )}
-
-      {(leagues.length > 0 || drafts.length > 0) && (
-        <div className="space-y-6">
-          <div className="flex flex-wrap items-baseline gap-3">
-            <h2 className="text-2xl font-bold text-ink">
-              Deine Ligen &amp; Drafts <span className="text-muted text-lg">({sport.toUpperCase()})</span>
-            </h2>
-            {cachedAt && (
-              <span className="text-xs text-muted">
-                zwischengespeichert {ageLabel(cachedAt)} · „Ligen laden“ holt neu
-              </span>
-            )}
-            {archivedCount > 0 && (
-              <button
-                onClick={() => setShowArchive((v) => !v)}
-                className="ml-auto px-3 py-1 rounded-md text-xs font-semibold border bg-surface text-muted border-line hover:text-ink"
-              >
-                {showArchive
-                  ? `Archiv ausblenden (${archivedCount})`
-                  : `Archiv einblenden (${archivedCount})`}
-              </button>
-            )}
-          </div>
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {leagues.map((league) => {
-              const leagueDrafts = drafts.filter((d) => d.league_id === league.league_id);
-
-              return (
-                <div
-                  key={league.league_id}
-                  className={`panel overflow-hidden transition-all hover:border-blue-500/50 flex flex-col h-full ${
-                    league.archived ? "opacity-60" : ""
-                  }`}
-                >
-                  <div className="px-6 py-5 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-lg leading-6 font-medium text-ink truncate" title={league.name}>
-                        {league.name}
-                      </h3>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {league.archived && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-raised text-muted border border-line">
-                            Archiv
-                          </span>
-                        )}
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-900/50 text-blue-300 border border-blue-800">
-                          {league.total_rosters} Teams
-                        </span>
-                      </div>
-                    </div>
-                    <div className="mt-4 flex items-center justify-between text-sm text-muted">
-                      <p>Saison: {league.season}</p>
-                      <p>
-                        Status: <span className="capitalize">{league.status}</span>
-                      </p>
-                    </div>
-                    {(severityByLeague.get(league.league_id) ?? 0) >= 2 && (
-                      <Link
-                        href={`/overview?${linkParams({})}`}
-                        className={`mt-3 inline-flex items-center gap-1 text-xs font-semibold ${
-                          severityByLeague.get(league.league_id) === 3
-                            ? "text-red-300 hover:text-red-200"
-                            : "text-orange-300 hover:text-orange-200"
-                        }`}
-                      >
-                        ⚠ Aufstellung prüfen →
-                      </Link>
-                    )}
-                  </div>
-                  <div className="bg-surface/50 px-6 py-3 border-t border-line flex flex-wrap gap-4 justify-between items-center">
-                    <Link
-                      href={`/waivers?${linkParams({ league_id: league.league_id })}`}
-                      className="text-blue-400 hover:text-blue-300 text-sm font-medium"
-                    >
-                      Waiver Wire →
-                    </Link>
-                    <Link
-                      href={`/lineup?${linkParams({ league_id: league.league_id })}`}
-                      className="text-blue-400 hover:text-blue-300 text-sm font-medium"
-                    >
-                      Lineup Optimizer →
-                    </Link>
-                    {leagueDrafts.map((d) => (
-                      <Link
-                        key={d.draft_id}
-                        href={`/draft?${linkParams({ draft_id: d.draft_id })}`}
-                        className="text-green-400 hover:text-green-300 text-sm font-medium w-full text-center mt-2 pt-2 border-t border-line"
-                      >
-                        Draft Assistant ({d.status}) →
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Drafts that belong to no league in the current list (e.g. mock drafts) */}
-            {drafts
-              .filter((d) => !leagues.some((l) => l.league_id === d.league_id))
-              .map((draft) => (
-                <div
-                  key={draft.draft_id}
-                  className="panel overflow-hidden transition-all border-green-500/30 hover:border-green-500/60 flex flex-col h-full"
-                >
-                  <div className="px-6 py-5 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-lg leading-6 font-medium text-ink truncate" title={draft.name}>
-                        {draft.name}
-                      </h3>
-                      <span className="shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-900/50 text-green-300 border border-green-800">
-                        Mock Draft
-                      </span>
-                    </div>
-                    <div className="mt-4 flex items-center justify-between text-sm text-muted">
-                      <p>
-                        Status: <span className="capitalize">{draft.status}</span>
-                      </p>
-                    </div>
-                  </div>
-                  <div className="bg-surface/50 px-6 py-3 border-t border-line flex justify-end">
-                    <Link
-                      href={`/draft?${linkParams({ draft_id: draft.draft_id })}`}
-                      className="text-green-400 hover:text-green-300 text-sm font-medium w-full text-center"
-                    >
-                      Draft Assistant öffnen →
-                    </Link>
-                  </div>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -71,7 +71,6 @@ export function useSections(storageKey: string, ids: string[]): SectionState {
 export function Section({
   id,
   title,
-  accent,
   meta,
   summary,
   state,
@@ -79,8 +78,6 @@ export function Section({
 }: {
   id: string;
   title: string;
-  /** Tailwind background class of the bar in front of the title. */
-  accent: string;
   /** Next to the title, always visible (counts, totals). */
   meta?: React.ReactNode;
   /** Shown only while folded: what is in here, so it need not be opened to know. */
@@ -94,11 +91,10 @@ export function Section({
       id={id}
       open={open}
       onToggle={(e) => state.toggle(id, (e.currentTarget as HTMLDetailsElement).open)}
-      className="group/section space-y-4 scroll-mt-20"
+      className="group/section space-y-4 scroll-mt-[calc(7rem+env(safe-area-inset-top))]"
     >
       <summary className="cursor-pointer list-none select-none flex items-center gap-2 flex-wrap">
-        <div className={`w-2 h-8 rounded-full ${accent}`}></div>
-        <h2 className="text-xl font-bold text-ink">{title}</h2>
+        <h2 className="headline">{title}</h2>
         {meta && <span className="text-sm text-muted">{meta}</span>}
         <span className="ml-auto text-xs text-muted group-open/section:hidden">
           Aufklappen ▸
@@ -106,7 +102,7 @@ export function Section({
         <span className="ml-auto text-xs text-muted hidden group-open/section:inline">
           Zuklappen ▾
         </span>
-        {!open && summary && <div className="basis-full pl-4 text-xs text-muted">{summary}</div>}
+        {!open && summary && <div className="basis-full text-xs text-muted">{summary}</div>}
       </summary>
       {children}
     </details>
@@ -122,18 +118,20 @@ export function SectionNav({
   state: SectionState;
 }) {
   return (
-    <nav className="sticky top-14 z-40 -mx-4 px-4 py-2 bg-canvas/85 backdrop-blur border-b border-line/60 flex flex-wrap items-center gap-2 text-xs">
+    // One line, under the header in the app as well: a nav of two lines covered
+    // the headline of the section it had just jumped to.
+    <nav className="sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-40 -mx-4 sm:mx-0 px-4 sm:px-0 py-2 bg-canvas/85 backdrop-blur border-b border-line/60 flex items-center gap-2 text-xs overflow-x-auto whitespace-nowrap">
       {items.map((item) => (
         <a
           key={item.id}
           href={`#${item.id}`}
           onClick={() => state.toggle(item.id, true)}
-          className="px-2.5 py-1 rounded-md border border-line bg-surface text-ink-soft hover:text-ink"
+          className="shrink-0 px-2.5 py-1 rounded-md border border-line bg-surface text-ink-soft hover:text-ink"
         >
           {item.label}
         </a>
       ))}
-      <span className="ml-auto flex gap-2">
+      <span className="ml-auto shrink-0 flex gap-2">
         <button
           onClick={() => state.setAll(false)}
           className="px-2.5 py-1 rounded-md border border-line bg-surface text-muted hover:text-ink"

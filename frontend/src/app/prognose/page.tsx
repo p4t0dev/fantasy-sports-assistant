@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import type { ForecastModel, ForecastParams, NbaModel } from "@/lib/types";
+import { PageHead } from "@/components/PageParts";
 import { PosBadge } from "@/components/PlayerBadges";
 
 // The one place the forecast is explained end to end. Weights, backtest
@@ -26,8 +27,8 @@ function pct(x: number) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="panel p-5 space-y-3">
-      <h2 className="text-lg font-bold text-ink">{title}</h2>
+    <section className="space-y-3">
+      <h2 className="headline">{title}</h2>
       <div className="text-sm text-ink-soft leading-relaxed space-y-3">{children}</div>
     </section>
   );
@@ -114,7 +115,7 @@ Einlocken, wenn Punkte im Spiel i ≥ V_i+1  (was der Rest der Woche wert ist)`}
         Punkten, Favorit oder Außenseiter ab {nba.thresholds.favorite} Punkten Abstand.
       </p>
       <p className="text-xs text-muted">
-        Neu fitten: <code className="text-blue-300">python3 tools/backtest_nba.py --season 2025 --write</code>
+        Neu fitten: <code className="text-ink">python3 tools/backtest_nba.py --season 2025 --write</code>
       </p>
     </Section>
   );
@@ -122,7 +123,7 @@ Einlocken, wenn Punkte im Spiel i ≥ V_i+1  (was der Rest der Woche wert ist)`}
 
 function Formula({ children }: { children: React.ReactNode }) {
   return (
-    <pre className="overflow-x-auto rounded-md border border-line bg-surface/70 p-3 text-[13px] text-blue-200">
+    <pre className="overflow-x-auto rounded-md border border-line bg-surface p-3 text-[13px] text-ink">
       {children}
     </pre>
   );
@@ -147,17 +148,11 @@ export default function ForecastModelPage() {
   const limits = model?.limits;
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-ink">So entsteht die Prognose</h1>
-          <p className="text-muted mt-1">
-            Jede Wochenzahl in der App — Aufstellung, Wochenübersicht — kommt aus
-            dieser einen Formel. Unter jedem Spieler lässt sich aufklappen, wie
-            seine Zahl zustande kommt.
-          </p>
-        </div>
-      </div>
+    <div className="space-y-8 max-w-4xl">
+      <PageHead
+        title="So entsteht die Prognose"
+        sub="Jede Wochenzahl in der App — Aufstellung, Wochenübersicht — kommt aus dieser einen Formel. Unter jedem Spieler lässt sich aufklappen, wie seine Zahl zustande kommt."
+      />
 
       <Section title="Die Formel">
         <Formula>{`Prognose  P = B × K × A
@@ -183,7 +178,7 @@ A         = Verfügbarkeit`}</Formula>
 
       <Section title="Die Bausteine">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[36rem] text-left text-xs">
             <thead className="text-muted uppercase tracking-wider">
               <tr>
                 <th className="py-2 pr-3">Faktor</th>
@@ -203,7 +198,7 @@ A         = Verfügbarkeit`}</Formula>
                   Schnitt seiner letzten {model?.form_games ?? 4} Spiele — je Position gemischt
                   aus dem, was er tatsächlich gepunktet hat, und dem, was seine{" "}
                   <em>Nutzung</em> erwarten ließ (xFP, siehe unten). Gewicht wächst mit jedem
-                  Spiel: <code className="text-blue-300">g_F = min(cap, n / (n + k))</code>
+                  Spiel: <code className="text-ink">g_F = min(cap, n / (n + k))</code>
                 </td>
                 <td className="py-2 text-muted">Box-Scores der gespielten Wochen</td>
               </tr>
@@ -229,7 +224,7 @@ A         = Verfügbarkeit`}</Formula>
                 <td className="py-2 pr-3">
                   Punkte, die der Gegner dieser Position im Schnitt erlaubt, gegen den
                   Ligaschnitt — früh in der Saison zum Schnitt gezogen (Gewicht{" "}
-                  <code className="text-blue-300">
+                  <code className="text-ink">
                     Spiele / (Spiele + {limits?.matchup_shrink ?? 6})
                   </code>
                   ). Dazu die Vegas-Erwartung für sein Team (Implied Team Total, Gewicht{" "}
@@ -281,7 +276,7 @@ A         = Verfügbarkeit`}</Formula>
         </p>
         {error && <p className="text-red-400 text-xs">Modell nicht geladen: {error}</p>}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[36rem] text-left text-xs">
             <thead className="text-muted uppercase tracking-wider">
               <tr>
                 <th className="py-2 pr-3">Pos</th>
@@ -428,7 +423,7 @@ A         = Verfügbarkeit`}</Formula>
           fehlen) — die Werte sind bewusst vorsichtig.
         </p>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[36rem] text-left text-xs">
             <thead className="text-muted uppercase tracking-wider">
               <tr>
                 <th className="py-2 pr-3">Pos</th>
@@ -495,7 +490,7 @@ A         = Verfügbarkeit`}</Formula>
           </li>
         </ul>
         <p className="text-xs text-muted">
-          Neu fitten: <code className="text-blue-300">python3 tools/backtest_forecast.py
+          Neu fitten: <code className="text-ink">python3 tools/backtest_forecast.py
           --league_id &lt;ID&gt; --fit --out functions/data/forecast_params.json</code>
         </p>
       </Section>
