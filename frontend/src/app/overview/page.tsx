@@ -4,12 +4,13 @@ import { useEffect, useState, useSyncExternalStore, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import type { LineupIssue, Overview, OverviewLeague, Player, WaiverMove } from "@/lib/types";
-import { InjuryBadge, MatchupBadge, PosBadge, startPts } from "@/components/PlayerBadges";
-import { CloseCalls, ForecastDelta, ForecastDetail, LockCalls, MatchupLine } from "@/components/ForecastDetail";
+import type { LineupIssue, Overview, OverviewLeague, WaiverMove } from "@/lib/types";
+import { InjuryBadge, PosBadge } from "@/components/PlayerBadges";
+import { CloseCalls, LockCalls, MatchupLine } from "@/components/ForecastDetail";
 import { slotLabel } from "@/lib/positions";
 import { ActivationOptions, STASH_LABEL } from "@/components/ActivationOptions";
 import { WeekFixes } from "@/components/WeekFixes";
+import { LineupSwap, PageHead, ScoreBar, Spinner } from "@/components/PageParts";
 import WaiverOverview, { waiverSummary } from "@/components/WaiverOverview";
 import { Section, SectionNav, useSections } from "@/components/Section";
 import {
@@ -90,25 +91,6 @@ function issueText(issue: LineupIssue): React.ReactNode {
   }
 }
 
-function PlayerLine({ player, tone }: { player: Player; tone: string }) {
-  return (
-    <div className="text-sm">
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
-          <PosBadge pos={player.pos} />
-          <span className={`${tone} truncate`}>{player.name}</span>
-          <MatchupBadge player={player} />
-        </span>
-        <span className="flex flex-col items-end shrink-0">
-          <span className="text-muted font-medium">{startPts(player)}</span>
-          <ForecastDelta player={player} />
-        </span>
-      </div>
-      <ForecastDetail player={player} />
-    </div>
-  );
-}
-
 function LeagueCard({
   league,
   week,
@@ -123,21 +105,23 @@ function LeagueCard({
 }) {
   const tone = SEVERITY_TONE[league.severity] ?? SEVERITY_TONE[1];
   const changes = league.changes ?? [];
-  const incoming = changes.map((c) => c.in);
-  const outgoing = changes.map((c) => c.out).filter((p): p is Player => p !== null);
   const starterNotes = (league.forecast_notes ?? []).filter((n) => n.starting);
 
   return (
-    <div className={`panel p-5 border-l-4 ${tone.border} space-y-4`}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h3 className="text-lg font-bold text-ink">{league.name}</h3>
-        <p className="text-sm text-muted">
-          aktuell <span className="text-ink font-medium">{league.current_total}</span>
-          {" → "}optimal <span className="text-ink font-medium">{league.total}</span>
-          {(league.gain ?? 0) > 0 && (
-            <span className="text-green-400 font-bold"> (+{league.gain})</span>
-          )}
-        </p>
+    <div className={`panel p-3 sm:p-4 border-l-4 ${tone.border} space-y-3`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-display font-bold text-xl leading-tight text-ink">{league.name}</h3>
+          <p className="text-sm text-muted">
+            aktuell <span className="text-ink font-medium">{league.current_total}</span>
+            {" → "}optimal <span className="text-ink font-medium">{league.total}</span>
+          </p>
+        </div>
+        {(league.gain ?? 0) > 0 && (
+          <span className="display shrink-0 px-2 py-1 text-[26px] bg-highlight text-on-highlight">
+            +{league.gain}
+          </span>
+        )}
       </div>
 
       <ul className="space-y-1.5">
@@ -153,24 +137,10 @@ function LeagueCard({
       </ul>
 
       {changes.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-line">
-          <div className="space-y-1.5">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-green-400">
-              Rein{week ? ` · Punkte W${week}` : ""}
-            </div>
-            {incoming.map((p) => (
-              <PlayerLine key={p.id} player={p} tone="text-ink" />
-            ))}
-          </div>
-          <div className="space-y-1.5">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-red-400">Raus</div>
-            {outgoing.map((p) => (
-              <PlayerLine key={p.id} player={p} tone="text-muted" />
-            ))}
-            {outgoing.length === 0 && (
-              <p className="text-xs text-muted">Leere Slots werden aufgefüllt.</p>
-            )}
-          </div>
+        <div className="space-y-2.5 -mx-3 sm:mx-0">
+          {changes.map((c) => (
+            <LineupSwap key={c.in.id} change={c} detail />
+          ))}
         </div>
       )}
 
@@ -213,9 +183,9 @@ function LeagueCard({
       <div className="flex justify-end">
         <Link
           href={`/lineup?${linkParams}&league_id=${league.league_id}`}
-          className="text-blue-400 hover:text-blue-300 text-sm font-medium"
+          className="link text-sm"
         >
-          Im Lineup Optimizer öffnen →
+          Lineup öffnen →
         </Link>
       </div>
     </div>
@@ -278,26 +248,20 @@ function OverviewContent() {
     return (
       <div className="panel p-8 text-center">
         <p className="text-ink-soft">Kein Username bekannt.</p>
-        <Link href="/" className="mt-4 inline-block text-blue-400 hover:text-blue-300">
+        <Link href="/" className="mt-4 inline-block link">
           ← Auf dem Dashboard Ligen laden
         </Link>
       </div>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
+  if (loading) return <Spinner />;
 
   if (error || !data) {
     return (
       <div className="panel p-8 text-center space-y-3">
         <p className="text-red-400">{error || "Keine Daten"}</p>
-        <Link href="/" className="inline-block text-blue-400 hover:text-blue-300">
+        <Link href="/" className="inline-block link">
           ← Zurück zum Dashboard
         </Link>
       </div>
@@ -320,28 +284,36 @@ function OverviewContent() {
   const linkParams = new URLSearchParams({ username, sport }).toString();
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-ink">Wochenübersicht</h1>
-          <p className="text-muted mt-1">
-            Aufstellung und Waiver über alle Ligen
-            {data.week ? ` · Woche ${data.week}` : ""} ·{" "}
+    <div className="space-y-6">
+      <PageHead
+        title={data.week ? `Woche ${data.week}` : "Wochenübersicht"}
+        sub={
+          <>
+            Aufstellung und Waiver über alle Ligen ·{" "}
             <span className="text-ink font-medium">{data.username}</span>
-          </p>
-          <p className={`text-xs mt-1 ${age.stale ? "text-orange-300" : "text-muted"}`}>
-            Stand {stamp} ({age.label}) · wird morgens, mittags und abends neu berechnet
-            {age.stale && " — der letzte Lauf ist ausgeblieben"}
-          </p>
-        </div>
-      </div>
+          </>
+        }
+      />
+
+      <ScoreBar
+        label="Stand über alle Ligen"
+        tiles={[
+          { label: "Dringend", value: urgent, hot: urgent > 0 },
+          { label: "Hinweise", value: flagged.length - urgent },
+          { label: "In Ordnung", value: fine.length },
+        ]}
+      />
+
+      <p className={`text-xs ${age.stale ? "text-orange-300" : "text-muted"}`}>
+        Stand {stamp} ({age.label}) · wird morgens, mittags und abends neu berechnet
+        {age.stale && " — der letzte Lauf ist ausgeblieben"}
+      </p>
 
       <SectionNav items={SECTIONS} state={sections} />
 
       <Section
         id="aufstellung"
         title="Aufstellung"
-        accent="bg-green-500"
         meta={`${flagged.length + fine.length} Ligen`}
         summary={
           urgent
@@ -352,20 +324,6 @@ function OverviewContent() {
         }
         state={sections}
       >
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { n: urgent, label: "Handlungsbedarf", tone: urgent ? "text-red-300" : "text-muted" },
-          { n: flagged.length - urgent, label: "Hinweise", tone: "text-yellow-300" },
-          { n: fine.length, label: "In Ordnung", tone: "text-green-400" },
-          { n: skipped.length, label: "Übersprungen", tone: "text-muted" },
-        ].map((tile) => (
-          <div key={tile.label} className="panel p-4">
-            <div className={`text-2xl font-bold ${tile.tone}`}>{tile.n}</div>
-            <div className="text-xs text-muted uppercase tracking-wider mt-1">{tile.label}</div>
-          </div>
-        ))}
-      </div>
-
       {flagged.length > 0 && (
         <div className="space-y-4">
           {flagged.map((league) => (
@@ -383,16 +341,14 @@ function OverviewContent() {
       )}
 
       {fine.length > 0 && (
-        <div className="panel p-5 space-y-2">
-          <h2 className="text-sm font-bold text-green-400 uppercase tracking-wider">
-            Aufstellung optimal
-          </h2>
+        <div className="panel p-4 space-y-2">
+          <h3 className="eyebrow">Aufstellung optimal</h3>
           {fine.map((league) => (
             <div key={league.league_id} className="text-sm">
               <div className="flex justify-between gap-3">
                 <Link
                   href={`/lineup?${linkParams}&league_id=${league.league_id}`}
-                  className="text-ink hover:text-ink"
+                  className="text-ink font-medium"
                 >
                   ✓ {league.name}
                 </Link>
@@ -407,8 +363,8 @@ function OverviewContent() {
       )}
 
       {skipped.length > 0 && (
-        <div className="panel p-5 space-y-2 opacity-70">
-          <h2 className="text-sm font-bold text-muted uppercase tracking-wider">Übersprungen</h2>
+        <div className="panel p-4 space-y-2 opacity-70">
+          <h3 className="eyebrow">Übersprungen</h3>
           {skipped.map((league) => (
             <div key={league.league_id} className="flex justify-between gap-3 text-sm">
               <span className="text-ink-soft">{league.name}</span>
@@ -425,7 +381,6 @@ function OverviewContent() {
       <Section
         id="waiver"
         title="Waiver"
-        accent="bg-blue-500"
         meta={data.waivers ? `${data.waivers.leagues.filter((l) => !l.skipped).length} Ligen` : undefined}
         summary={data.waivers ? waiverSummary(data.waivers.leagues) : "noch nicht berechnet"}
         state={sections}

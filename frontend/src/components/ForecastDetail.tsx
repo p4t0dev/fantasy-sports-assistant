@@ -69,7 +69,7 @@ export function ForecastDetail({ player }: { player: Player }) {
   if (!fc) return null;
   const weeks = Object.entries(player.usage?.pts_by_week ?? {});
   return (
-    <details className="mt-1.5 group/fc">
+    <details className="mt-1.5 w-full group/fc">
       <summary className="cursor-pointer list-none select-none text-[11px] text-muted hover:text-ink-soft">
         <span className="group-open/fc:hidden">▸</span>
         <span className="hidden group-open/fc:inline">▾</span> Wie kommt die {fc.P.toFixed(1)} zustande?
@@ -109,7 +109,7 @@ export function ForecastDetail({ player }: { player: Player }) {
           </div>
         )}
         {player.usage?.label && <div className="text-muted">Nutzung {player.usage.label}</div>}
-        <Link href="/prognose" className="inline-block text-blue-400 hover:text-blue-300">
+        <Link href="/prognose" className="inline-block link">
           So funktioniert die Prognose →
         </Link>
       </div>
@@ -140,7 +140,7 @@ export function HorizonDetail({ player }: { player: Player }) {
   if (!weeks?.length) return null;
   const total = weeks.reduce((sum, w) => sum + w.pts, 0);
   return (
-    <details className="mt-1.5 group/hz">
+    <details className="mt-1.5 w-full group/hz">
       <summary className="cursor-pointer list-none select-none text-[11px] text-muted hover:text-ink-soft">
         <span className="group-open/hz:hidden">▸</span>
         <span className="hidden group-open/hz:inline">▾</span> Prognose W{weeks[0].week}–
@@ -174,7 +174,7 @@ export function HorizonDetail({ player }: { player: Player }) {
             ))}
           </ul>
         )}
-        <Link href="/prognose" className="inline-block text-blue-400 hover:text-blue-300">
+        <Link href="/prognose" className="inline-block link">
           So funktioniert die Prognose →
         </Link>
       </div>

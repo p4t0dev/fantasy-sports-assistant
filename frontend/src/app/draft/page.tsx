@@ -5,8 +5,9 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import type { Need } from "@/lib/types";
-import { PosBadge } from "@/components/PlayerBadges";
+import { PosBadge, SlotBadge } from "@/components/PlayerBadges";
 import NeedCard from "@/components/NeedCard";
+import { BoardHead, BoardRow, PageHead, RefreshButton, ScoreBar, Spinner, TABLE } from "@/components/PageParts";
 import { PosFilter, SortBar, sortBy, type SortOption } from "@/components/Controls";
 
 type Injury = { status: string | null; severity: number; label: string | null };
@@ -60,14 +61,6 @@ type DraftData = {
   top_recommendations: Recommendation[];
   best_available: DraftPlayer[];
   positions: string[];
-};
-
-const REC_ICONS: Record<string, string> = { bpa: "🥇", fit: "🎯", now: "⚡", trade: "💰" };
-const REC_COLORS: Record<string, string> = {
-  bpa: "border-yellow-500/50 bg-yellow-900/10",
-  fit: "border-green-500/50 bg-green-900/10",
-  now: "border-sky-500/50 bg-sky-900/10",
-  trade: "border-blue-500/50 bg-blue-900/10",
 };
 
 // Each card ranks on its own number, so each card shows its own number.
@@ -198,26 +191,20 @@ function DraftAssistantContent() {
     return (
       <div className="panel p-8 text-center">
         <p className="text-red-400">Username oder draft_id fehlt in der URL.</p>
-        <Link href="/" className="mt-4 inline-block text-green-400 hover:text-green-300">
+        <Link href="/" className="mt-4 inline-block link">
           ← Zurück zum Dashboard
         </Link>
       </div>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[50vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500"></div>
-      </div>
-    );
-  }
+  if (loading) return <Spinner />;
 
   if (error) {
     return (
       <div className="panel p-8 text-center">
         <p className="text-red-400">{error}</p>
-        <Link href="/" className="mt-4 inline-block text-green-400 hover:text-green-300">
+        <Link href="/" className="mt-4 inline-block link">
           ← Zurück zum Dashboard
         </Link>
       </div>
@@ -230,125 +217,84 @@ function DraftAssistantContent() {
   const typeLabel = metadata ? PLAYER_TYPE_LABELS[metadata.player_type] : undefined;
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 panel p-6 border-green-500/30">
-        <div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-3xl font-bold text-ink">{metadata?.name}</h1>
-            {typeLabel && (
-              <span className="bg-yellow-600/30 text-yellow-400 border border-yellow-500/50 text-xs px-2 py-1 rounded font-bold uppercase">
-                {typeLabel}
-              </span>
-            )}
-          </div>
-          <p className="text-muted mt-2">
-            Status: <span className="text-ink capitalize font-medium">{metadata?.status}</span>
-            {" | "}
-            Dein Slot: <span className="text-green-400 font-bold">{metadata?.user_slot ?? "—"}</span>
-            {metadata?.rounds ? ` | ${metadata.rounds} Runden` : ""}
-          </p>
-        </div>
+    <div className="space-y-6">
+      <PageHead
+        title={metadata?.name}
+        sub={
+          <>
+            <span className="capitalize">{metadata?.status}</span>
+            {typeLabel ? ` · ${typeLabel}` : ""}
+          </>
+        }
+        action={<RefreshButton busy={refreshing} onClick={refresh} />}
+      />
 
-        <div className="flex flex-col items-end gap-3">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={refresh}
-              disabled={refreshing}
-              className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-bold flex items-center gap-2 shadow-lg shadow-green-500/20"
-            >
-              {refreshing ? "Aktualisiere…" : "↻ Board neu laden"}
-            </button>
-          </div>
-          {lastPick && (
-            <div className="text-sm text-muted text-right">
-              Letzter Pick:{" "}
-              <span className="text-ink font-medium">
-                Runde {lastPick.round}, Pick {lastPick.draft_slot}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
+      <ScoreBar
+        label="Stand des Drafts"
+        tiles={[
+          { label: "Dein Slot", value: metadata?.user_slot ?? "–", hot: metadata?.user_slot != null },
+          {
+            label: "Letzter Pick",
+            value: lastPick ? `${lastPick.round}.${String(lastPick.draft_slot).padStart(2, "0")}` : "–",
+          },
+          { label: "Runden", value: metadata?.rounds ?? "–" },
+        ]}
+      />
 
       {recommendations.length > 0 && (
-        <div className="space-y-4 mb-8">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="w-2 h-8 bg-yellow-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-ink">Top-Empfehlungen</h2>
-            <span className="text-sm text-muted">
-              Vier Fragen, vier Antworten — Value, Bedarf, Sofortnutzen, Marktwert
-            </span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-            {recommendations.map((rec, idx) => (
-              <div
-                key={idx}
-                className={`panel p-5 border-t-4 ${REC_COLORS[rec.type]} flex flex-col gap-3 transition-transform hover:-translate-y-1`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">{REC_ICONS[rec.type]}</span>
-                  <h3 className="text-base font-bold text-ink leading-tight">{rec.title}</h3>
-                </div>
-                <div>
-                  <div className="text-lg font-bold text-ink flex items-center gap-2 flex-wrap">
-                    {eligOf(rec.player).map((pos) => (
-                      <PosBadge key={pos} pos={pos} />
-                    ))}
-                    {rec.player.name}
-                    {rec.player.is_rookie && (
-                      <span className="text-[10px] bg-yellow-600/30 text-yellow-400 px-1.5 py-0.5 rounded uppercase font-bold">
-                        Rookie
+        <section className="space-y-2.5">
+          <h2 className="headline">Top-Empfehlungen</h2>
+          <p className="text-xs text-muted">
+            Vier Fragen, vier Antworten — Value, Bedarf, Sofortnutzen, Marktwert
+          </p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+            {recommendations.map((rec, idx) => {
+              // The block is always the number this card was ranked on.
+              // Showing the dynasty edge under "Bester Sofort-Starter" put a
+              // large negative next to a pick chosen on projected points.
+              const metric = REC_METRIC[rec.type](rec.player);
+              return (
+                <div key={idx} className="flex items-stretch bg-surface">
+                  <div className="flex-1 min-w-0 px-3 py-2.5 space-y-1">
+                    <div className="eyebrow">{rec.title}</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {eligOf(rec.player).map((pos) => (
+                        <PosBadge key={pos} pos={pos} />
+                      ))}
+                      <span className="font-display font-bold text-xl leading-tight text-ink">
+                        {rec.player.name}
                       </span>
-                    )}
+                      {rec.player.is_rookie && (
+                        <span className="text-[10px] bg-yellow-600/30 text-yellow-400 px-1.5 py-0.5 rounded uppercase font-bold">
+                          Rookie
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[13px] text-muted">
+                      {rec.player.team} · Age {rec.player.age} · {rec.player.dvs} DVS · {rec.player.pts} Proj
+                    </div>
+                    <p className="text-xs text-ink-soft leading-relaxed">{rec.reason}</p>
                   </div>
-                  <div className="text-sm text-muted">
-                    {rec.player.team} • Age {rec.player.age}
+                  <div
+                    className={`min-w-16 px-2 shrink-0 flex flex-col items-center justify-center ${
+                      metric.value >= 0 ? "bg-highlight text-on-highlight" : "bg-raised text-ink"
+                    }`}
+                  >
+                    <span className="display text-[26px]">
+                      {metric.signed ? signed(metric.value) : metric.value}
+                    </span>
+                    <span className="mt-0.5 text-[10px] font-semibold">{metric.label}</span>
                   </div>
                 </div>
-                {/* The middle column is always the number this card was
-                    ranked on. Showing the dynasty edge under "Bester
-                    Sofort-Starter" put a large negative next to a pick that
-                    was chosen on projected points. */}
-                <div className="grid grid-cols-3 gap-2 text-sm">
-                  <div>
-                    <span className="text-[10px] text-muted uppercase tracking-wider block">DVS</span>
-                    <span className="font-bold text-blue-400">{rec.player.dvs}</span>
-                  </div>
-                  {(() => {
-                    const metric = REC_METRIC[rec.type](rec.player);
-                    return (
-                      <div>
-                        <span className="text-[10px] text-ink-soft uppercase tracking-wider block font-semibold">
-                          {metric.label}
-                        </span>
-                        <span
-                          className={`font-bold ${metric.value >= 0 ? "text-green-400" : "text-muted"}`}
-                        >
-                          {metric.signed ? signed(metric.value) : metric.value}
-                        </span>
-                      </div>
-                    );
-                  })()}
-                  <div>
-                    <span className="text-[10px] text-muted uppercase tracking-wider block">Proj</span>
-                    <span className="font-bold text-purple-400">{rec.player.pts}</span>
-                  </div>
-                </div>
-                <p className="text-xs text-ink-soft bg-surface/50 p-3 rounded border border-line leading-relaxed mt-auto">
-                  {rec.reason}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </div>
+        </section>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1 space-y-4">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-2 h-8 bg-purple-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-ink">Dein Teambedarf</h2>
-          </div>
+          <h2 className="headline">Dein Teambedarf</h2>
 
           {needs.length === 0 ? (
             <div className="panel p-6 text-center text-muted">
@@ -362,16 +308,15 @@ function DraftAssistantContent() {
             </div>
           )}
 
-          <div className="panel p-6 border-blue-500/30 bg-blue-900/10 mt-6">
-            <h3 className="text-blue-300 font-bold mb-2">💡 Draft-Strategie</h3>
+          <div className="panel p-4">
+            <h3 className="eyebrow mb-2">Draft-Strategie</h3>
             <p className="text-sm text-ink-soft">{strategyHint(sport, metadata?.is_rookie_draft)}</p>
           </div>
         </div>
 
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="w-2 h-8 bg-green-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-ink">Best Available</h2>
+            <h2 className="headline">Best Available</h2>
             <span className="text-sm text-muted">
               {visibleBoard.length} von {bestAvailable.length}
             </span>
@@ -384,119 +329,57 @@ function DraftAssistantContent() {
             counts={countAt}
             active={posFilter}
             onPick={setPosFilter}
-            tone="bg-green-600 text-white border-green-500"
             severityByPos={severityByPos}
             needs={needs}
           />
 
-          <div className="panel overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-line">
-                <thead className="bg-surface/50">
-                  <tr>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">
-                      Spieler
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-muted uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-4 py-3 text-right text-xs font-medium text-green-300 uppercase tracking-wider"
-                      title="DVS über dem Ersatzniveau seiner besten Position — der einzige positionsübergreifend vergleichbare Wert"
-                    >
-                      Edge
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-blue-300 uppercase tracking-wider" title="Saisonprognose in der Wertung dieser Liga">
-                      Proj
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-blue-400 uppercase tracking-wider" title="Dynasty Value Score">
-                      DVS
-                    </th>
-                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-purple-400 uppercase tracking-wider" title="Redraft Value Score">
-                      RVS
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line bg-transparent">
-                  {visibleBoard.map((player) => {
-                    const elig = eligOf(player);
-                    const isNeeded = needs.some((n) => elig.includes(n.pos));
-                    const severity = player.injury?.severity ?? 0;
-                    return (
-                      <tr
-                        key={player.id}
-                        className={`transition-colors hover:bg-raised/50 ${isNeeded ? "bg-green-900/10" : ""}`}
-                      >
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <div className="flex items-center gap-3">
-                            <div className="flex flex-col gap-1 items-start w-14 shrink-0">
-                              {elig.map((pos) => (
-                                <PosBadge key={pos} pos={pos} className="w-full" />
-                              ))}
-                            </div>
-                            <div>
-                              <div className="text-sm font-medium text-ink flex items-center gap-2">
-                                {player.name}
-                                {isNeeded && (
-                                  <span className="w-2 h-2 rounded-full bg-green-500" title="Passt auf deinen Bedarf"></span>
-                                )}
-                                {player.is_rookie && (
-                                  <span className="text-[10px] bg-yellow-600/30 text-yellow-400 px-1.5 py-0.5 rounded uppercase font-bold">
-                                    Rookie
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-xs text-muted">
-                                {player.team} • Age {player.age}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-center">
-                          <span
-                            title={player.injury?.label ?? undefined}
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                              severity >= 3
-                                ? "bg-red-900/30 text-red-400"
-                                : severity > 0
-                                ? "bg-yellow-900/30 text-yellow-400"
-                                : "bg-green-900/30 text-green-400"
-                            }`}
-                          >
-                            {player.injury?.status || player.status || "Active"}
-                          </span>
-                        </td>
-                        <td
-                          className={`px-4 py-3 whitespace-nowrap text-right text-sm font-bold ${
-                            player.edge >= 0 ? "text-green-400" : "text-muted"
-                          }`}
-                          title={`${player.edge_pos ?? player.pos}-Ersatzniveau: ${player.replacement} DVS`}
-                        >
-                          {signed(player.edge)}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-blue-300">
-                          {player.pts}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-ink">
-                          {player.dvs}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-muted">
-                          {player.rvs}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {visibleBoard.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted">
-                        Kein verfügbarer Spieler auf dieser Position.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+          <div className={TABLE}>
+            <BoardHead first="POS" stats={["EDGE", "PROJ"]} />
+            {visibleBoard.map((player) => {
+              const elig = eligOf(player);
+              // NBA players are "ACT", NFL players "Active".
+              const inactive = !player.injury?.status && player.status && !["Active", "ACT"].includes(player.status);
+              return (
+                <BoardRow
+                  key={player.id}
+                  chip={<SlotBadge slot={player.pos} compact />}
+                  name={player.name}
+                  injury={player.injury}
+                  tag={
+                    <>
+                      {needs.some((n) => elig.includes(n.pos)) && (
+                        <span className="w-2 h-2 shrink-0 rounded-full bg-highlight" title="Passt auf deinen Bedarf"></span>
+                      )}
+                      {player.is_rookie && (
+                        <span className="font-sans not-italic text-[10px] bg-yellow-600/30 text-yellow-400 px-1.5 py-0.5 rounded uppercase font-bold shrink-0">
+                          Rookie
+                        </span>
+                      )}
+                    </>
+                  }
+                  sub={
+                    <>
+                      {elig.length > 1 && elig.map((pos) => <PosBadge key={pos} pos={pos} />)}
+                      <span>
+                        {player.team} · Age {player.age} · {player.dvs} DVS · {player.rvs} RVS
+                        {inactive ? ` · ${player.status}` : ""}
+                      </span>
+                    </>
+                  }
+                  stats={[
+                    <span key="edge" title={`${player.edge_pos ?? player.pos}-Ersatzniveau: ${player.replacement} DVS`}>
+                      {signed(player.edge)}
+                    </span>,
+                    player.pts,
+                  ]}
+                />
+              );
+            })}
+            {visibleBoard.length === 0 && (
+              <div className="px-4 py-8 text-center text-sm text-muted">
+                Kein verfügbarer Spieler auf dieser Position.
+              </div>
+            )}
           </div>
         </div>
       </div>

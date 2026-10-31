@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { WaiverLeague, WaiverMove, WaiverMoveSide } from "@/lib/types";
-import { InjuryBadge, PosBadge } from "@/components/PlayerBadges";
+import { SwapCard, type SwapSide } from "@/components/PageParts";
 import { WeekFixes } from "@/components/WeekFixes";
 
 // The waiver half of the weekly overview: every league's move plan on one
@@ -14,58 +14,39 @@ const SKIP_TEXT: Record<string, string> = {
   error: "Sleeper nicht erreichbar — beim nächsten Lauf erneut",
 };
 
-function Side({ side, tone }: { side: WaiverMoveSide; tone: string }) {
-  return (
-    <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
-      <PosBadge pos={side.pos} />
-      <span className={`${tone} truncate`}>{side.name}</span>
-      <span className="text-[10px] text-muted">{side.team}</span>
-      <InjuryBadge injury={side.injury} />
-      {side.per_week != null && (
-        <span className="text-[11px] text-muted">{side.per_week.toFixed(1)}/Wo</span>
-      )}
-    </span>
-  );
+function side(label: string, s: WaiverMoveSide): SwapSide {
+  return {
+    label,
+    pos: s.pos,
+    name: s.name,
+    injury: s.injury,
+    value: s.per_week?.toFixed(1),
+    below: s.team,
+  };
 }
 
 function Move({ move }: { move: WaiverMove }) {
   const lineup = move.kind === "lineup";
   return (
-    <li className="rounded-md border border-line bg-surface/50 p-2.5 space-y-1.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span
-          className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
-            lineup
-              ? "text-green-300 border-green-700 bg-green-900/30"
-              : "text-muted border-line bg-raised/60"
-          }`}
-        >
-          {lineup
-            ? `Startelf +${move.lineup_gain ?? 0} Pkt/Wo`
-            : `Kadertiefe +${move.edge_gain ?? 0} ${move.edge_unit ?? ""}`}
-        </span>
-        {move.faab && (
-          <span className="text-[11px] text-purple-300">
-            {move.faab.min}–{move.faab.max} FAAB
-          </span>
-        )}
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-green-400 w-9 shrink-0">ADD</span>
-          <Side side={move.add} tone="text-ink" />
-        </div>
-        {move.drop && (
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-red-400 w-9 shrink-0">DROP</span>
-            <Side side={move.drop} tone="text-muted" />
-          </div>
-        )}
-      </div>
-      <details className="text-[11px] text-muted">
-        <summary className="cursor-pointer list-none select-none hover:text-ink">▸ Warum?</summary>
-        <p className="mt-1">{move.reason}</p>
-      </details>
+    <li>
+      <SwapCard
+        quiet={!lineup}
+        gain={`+${(lineup ? move.lineup_gain : move.edge_gain) ?? 0}`}
+        unit={lineup ? "Pkt/Wo" : move.edge_unit}
+        sides={[side("Add", move.add), ...(move.drop ? [side("Drop", move.drop)] : [])]}
+      >
+        <details className="text-[11px] text-muted">
+          <summary className="cursor-pointer list-none select-none hover:text-ink">
+            ▸ Warum?
+            {move.faab && (
+              <span className="ml-2 font-semibold text-ink-soft">
+                {move.faab.min}–{move.faab.max} FAAB
+              </span>
+            )}
+          </summary>
+          <p className="mt-1">{move.reason}</p>
+        </details>
+      </SwapCard>
     </li>
   );
 }
@@ -87,7 +68,7 @@ function LeagueWaivers({ league, linkParams }: { league: WaiverLeague; linkParam
           {faab?.left != null && (
             <>
               {" · "}
-              <span className="text-purple-300">
+              <span className="text-ink-soft font-medium">
                 {faab.left} von {faab.budget} FAAB übrig
               </span>
             </>
@@ -95,7 +76,7 @@ function LeagueWaivers({ league, linkParams }: { league: WaiverLeague; linkParam
         </span>
         <Link
           href={`/waivers?${linkParams}&league_id=${league.league_id}`}
-          className="text-blue-400 hover:text-blue-300 font-medium"
+          className="link"
         >
           Waiver-Seite →
         </Link>
@@ -149,16 +130,16 @@ export default function WaiverOverview({
       </p>
 
       {upgrade.map((league) => (
-        <div key={league.league_id} className="panel p-5 border-l-4 border-l-green-500 bg-green-900/5 space-y-3">
-          <h3 className="text-lg font-bold text-ink">{league.name}</h3>
+        <div key={league.league_id} className="panel p-3 sm:p-4 space-y-3">
+          <h3 className="font-display font-bold text-xl leading-tight text-ink">{league.name}</h3>
           <LeagueWaivers league={league} linkParams={linkParams} />
         </div>
       ))}
 
       {depth.map((league) => (
-        <details key={league.league_id} className="panel p-4 group">
+        <details key={league.league_id} className="panel p-3 sm:p-4 group">
           <summary className="cursor-pointer list-none select-none flex flex-wrap items-baseline justify-between gap-2">
-            <span className="text-ink font-medium">
+            <span className="font-display font-semibold text-lg leading-tight text-ink">
               <span className="text-muted group-open:hidden">▸ </span>
               <span className="text-muted hidden group-open:inline">▾ </span>
               {league.name}

@@ -18,7 +18,6 @@ import { ActivationOptions, StashBadge } from "@/components/ActivationOptions";
 import {
   InjuryBadge,
   SignalBadges,
-  PosBadge,
   EligBadges,
   SlotBadge,
   LockBadge,
@@ -29,6 +28,7 @@ import {
 import { CloseCalls, ForecastDetail, LockCalls, MatchupLine } from "@/components/ForecastDetail";
 import { useRememberLeague } from "@/lib/lastLeague";
 import { slotLabel } from "@/lib/positions";
+import { LineupSwap, PageHead, RefreshButton, ScoreBar, Spinner, TABLE } from "@/components/PageParts";
 import { Section, SectionNav, useSections } from "@/components/Section";
 
 type LineupData = {
@@ -56,9 +56,6 @@ type LineupData = {
 
 /** Slot, player, opponent, our forecast, the number it is compared against. */
 const COLUMNS = "grid grid-cols-[2.75rem_minmax(0,1fr)_3rem_2.5rem_2.5rem] gap-x-2 px-3";
-
-/** Edge to edge on a phone: every pixel goes to the player's name. */
-const TABLE = "panel overflow-hidden -mx-4 sm:mx-0 border-x-0 sm:border-x";
 
 function TableHead({ first, base }: { first: string; base: string }) {
   return (
@@ -105,9 +102,9 @@ function PlayerRow({
         <div className="text-[13px] text-muted flex items-center gap-1.5 flex-wrap">
           {sub}
           <span>{player.team}</span>
-          {/* Basis 0: this takes what is left of the line, it never opens a new one. */}
-          {meta && <span className="basis-0 grow min-w-0 truncate">· {meta}</span>}
           <LockBadge player={player} />
+          {/* NBA players carry up to three position badges: then it moves to its own line. */}
+          {meta && <span className="whitespace-nowrap">{meta}</span>}
         </div>
         {note && <div className="text-[13px] font-semibold text-change-ink">{note}</div>}
       </div>
@@ -186,60 +183,6 @@ function SeatRow({
   );
 }
 
-/** One recommended change: who comes in, who goes, what it brings. */
-function SwapCard({ change }: { change: LineupChange }) {
-  const gain = change.out ? startPts(change.in) - startPts(change.out) : null;
-  return (
-    <div className="flex items-stretch bg-change">
-      <div className="flex-1 min-w-0 px-3 py-2.5 space-y-1.5">
-        <div className="flex items-center gap-2">
-          <span className="w-9 shrink-0 text-xs font-bold uppercase tracking-wide text-change-ink">Rein</span>
-          <PosBadge pos={change.in.pos} />
-          <span className="font-display font-bold text-xl leading-tight text-ink truncate">{change.in.name}</span>
-          <InjuryBadge injury={change.in.injury} />
-          <span className="ml-auto text-sm font-semibold text-ink">{startPts(change.in)}</span>
-        </div>
-        {change.out && (
-          <div className="flex items-center gap-2 text-muted">
-            <span className="w-9 shrink-0 text-xs font-bold uppercase tracking-wide">Raus</span>
-            <PosBadge pos={change.out.pos} />
-            <span className="text-[15px] truncate">{change.out.name}</span>
-            <InjuryBadge injury={change.out.injury} />
-            <span className="ml-auto text-sm">{startPts(change.out)}</span>
-          </div>
-        )}
-      </div>
-      {gain != null && (
-        <div className="display w-16 shrink-0 flex items-center justify-center bg-highlight text-on-highlight text-[26px]">
-          {gain > 0 ? "+" : ""}
-          {gain.toFixed(1)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ScoreBar({ current, optimal, gain }: { current?: number; optimal?: number; gain: number }) {
-  const label = "text-xs font-semibold tracking-wider uppercase";
-  const value = "display text-[40px] normal-case tracking-normal mt-0.5";
-  return (
-    <section aria-label="Punkte der Aufstellung" className="grid grid-cols-3 bg-bar text-bar-ink">
-      <div className="px-3 pt-2.5 pb-2">
-        <div className={label}>Aktuell</div>
-        <div className={`${value} font-bold`}>{current}</div>
-      </div>
-      <div className="px-3 pt-2.5 pb-2 border-l border-bar-line">
-        <div className={label}>Optimal</div>
-        <div className={`${value} font-bold`}>{optimal}</div>
-      </div>
-      <div className={`px-3 pt-2.5 pb-2 ${gain > 0 ? "bg-highlight text-on-highlight" : "border-l border-bar-line"}`}>
-        <div className={label}>Gewinn</div>
-        <div className={value}>{gain > 0 ? `+${gain}` : gain}</div>
-      </div>
-    </section>
-  );
-}
-
 function HowItWorks({
   currentTotal,
   optimalTotal,
@@ -254,8 +197,8 @@ function HowItWorks({
   week: number | null;
 }) {
   return (
-    <details className="panel border-blue-500/30 bg-blue-900/10 p-4 group">
-      <summary className="cursor-pointer list-none select-none text-blue-300 font-bold text-sm flex items-center gap-2">
+    <details className="panel p-4 group">
+      <summary className="cursor-pointer list-none select-none text-ink font-bold text-sm flex items-center gap-2">
         <span>Wie wird das berechnet?</span>
         <span className="font-normal text-muted text-xs">
           Prognose, Slot-Zuordnung und Gewinnrechnung
@@ -280,7 +223,7 @@ function HowItWorks({
                 es bei Sleeper. Weicht die Prognose von Sleeper ab, steht Sleepers
                 Zahl klein daneben; unter jedem Spieler lässt sich aufklappen,
                 wie seine Zahl zustande kommt.{" "}
-                <Link href="/prognose" className="text-blue-400 hover:text-blue-300">
+                <Link href="/prognose" className="link">
                   Das ganze Modell →
                 </Link>
               </>
@@ -317,7 +260,7 @@ function HowItWorks({
             3. Wie die Slots besetzt werden
           </h4>
           <p>
-            Jeder Spieler wird über <code className="text-blue-300">fantasy_positions</code>{" "}
+            Jeder Spieler wird über <code className="text-ink">fantasy_positions</code>{" "}
             allen Slots zugeordnet, die ihn zulassen — inklusive FLEX, SUPERFLEX,
             G/F und UTIL. Ein Cornerback zählt damit als DB, ein Combo-Guard als
             PG <em>und</em> SG. Die Zuordnung maximiert den{" "}
@@ -468,26 +411,20 @@ function LineupContent() {
     return (
       <div className="panel p-8 text-center">
         <p className="text-red-400">Username oder league_id fehlt in der URL.</p>
-        <Link href="/" className="mt-4 inline-block text-blue-400 hover:text-blue-300">
+        <Link href="/" className="mt-4 inline-block link">
           ← Zurück zum Dashboard
         </Link>
       </div>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
+  if (loading) return <Spinner />;
 
   if (error) {
     return (
       <div className="panel p-8 text-center">
         <p className="text-red-400">{error}</p>
-        <Link href="/" className="mt-4 inline-block text-blue-400 hover:text-blue-300">
+        <Link href="/" className="mt-4 inline-block link">
           ← Zurück zum Dashboard
         </Link>
       </div>
@@ -508,49 +445,37 @@ function LineupContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-[26px] font-extrabold leading-none text-ink">
-            {week ? `Woche ${week}` : "Aufstellung"}
-          </h1>
-          <p className="text-sm text-muted mt-1 truncate">{data?.league.name}</p>
-        </div>
-        <button
-          onClick={() => {
-            setRefreshing(true);
-            setReloadToken((t) => t + 1);
-          }}
-          disabled={refreshing}
-          aria-label="Neu laden"
-          title="Neu laden"
-          className="w-11 h-11 shrink-0 flex items-center justify-center border border-line text-ink disabled:opacity-50"
-        >
-          <svg
-            className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M20 11a8 8 0 1 0-2.3 6.3" />
-            <path d="M20 4v7h-7" />
-          </svg>
-        </button>
-      </div>
+      <PageHead
+        title={week ? `Woche ${week}` : "Aufstellung"}
+        sub={data?.league.name}
+        action={
+          <RefreshButton
+            busy={refreshing}
+            onClick={() => {
+              setRefreshing(true);
+              setReloadToken((t) => t + 1);
+            }}
+          />
+        }
+      />
 
-      <ScoreBar current={data?.current_total} optimal={data?.total} gain={gain} />
+      <ScoreBar
+        label="Punkte der Aufstellung"
+        tiles={[
+          { label: "Aktuell", value: data?.current_total },
+          { label: "Optimal", value: data?.total },
+          { label: "Gewinn", value: gain > 0 ? `+${gain}` : gain, hot: gain > 0 },
+        ]}
+      />
 
       <section className="space-y-2.5">
-        <h2 className="text-[26px] font-extrabold uppercase leading-none text-ink">
+        <h2 className="headline">
           {changes.length > 0
             ? `${changes.length} Wechsel`
             : "Aufstellung ist optimal"}
         </h2>
         {changes.map((c, i) => (
-          <SwapCard key={i} change={c} />
+          <LineupSwap key={i} change={c} />
         ))}
         <div className="space-y-2 pt-1">
           <MatchupLine stance={data?.matchup} />
@@ -590,7 +515,6 @@ function LineupContent() {
         <Section
           id="aufstellung"
           title="Aufstellung"
-          accent="bg-ink"
           summary={seats
             .filter((s) => s.optimal)
             .map((s) => s.optimal!.name)
@@ -630,7 +554,6 @@ function LineupContent() {
         <Section
           id="bank"
           title="Bank"
-          accent="bg-raised-2"
           meta={`${bench.length}`}
           summary={bench
             .slice(0, 4)
@@ -660,7 +583,7 @@ function LineupContent() {
             )}
             {stashed.length > 0 && (
               <div className="pt-2 space-y-2">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-muted">
+                <div className="eyebrow">
                   Taxi &amp; IR — nicht aufstellbar ohne Kaderzug
                 </div>
                 {stashed.map((p) => (
