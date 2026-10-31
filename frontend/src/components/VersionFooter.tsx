@@ -14,15 +14,15 @@ export default function VersionFooter() {
     : null;
 
   return (
-    <footer className="border-t border-gray-800/80 mt-8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-        <span className="font-medium text-gray-400">v{version}</span>
+    <footer className="border-t border-line/80 mt-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+        <span className="font-medium text-muted">v{version}</span>
         {pr && pr !== "0" && (
-          <a href={`${REPO}/pull/${pr}`} className="hover:text-gray-300" target="_blank" rel="noreferrer">
+          <a href={`${REPO}/pull/${pr}`} className="hover:text-ink-soft" target="_blank" rel="noreferrer">
             PR #{pr}
           </a>
         )}
-        <a href={`${REPO}/commit/${sha}`} className="font-mono hover:text-gray-300" target="_blank" rel="noreferrer">
+        <a href={`${REPO}/commit/${sha}`} className="font-mono hover:text-ink-soft" target="_blank" rel="noreferrer">
           {sha}
         </a>
         {date && <span>gebaut {date}</span>}

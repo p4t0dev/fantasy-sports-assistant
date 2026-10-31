@@ -98,15 +98,15 @@ export function Section({
     >
       <summary className="cursor-pointer list-none select-none flex items-center gap-2 flex-wrap">
         <div className={`w-2 h-8 rounded-full ${accent}`}></div>
-        <h2 className="text-xl font-bold text-white">{title}</h2>
-        {meta && <span className="text-sm text-gray-500">{meta}</span>}
-        <span className="ml-auto text-xs text-gray-500 group-open/section:hidden">
+        <h2 className="text-xl font-bold text-ink">{title}</h2>
+        {meta && <span className="text-sm text-muted">{meta}</span>}
+        <span className="ml-auto text-xs text-muted group-open/section:hidden">
           Aufklappen ▸
         </span>
-        <span className="ml-auto text-xs text-gray-500 hidden group-open/section:inline">
+        <span className="ml-auto text-xs text-muted hidden group-open/section:inline">
           Zuklappen ▾
         </span>
-        {!open && summary && <div className="basis-full pl-4 text-xs text-gray-400">{summary}</div>}
+        {!open && summary && <div className="basis-full pl-4 text-xs text-muted">{summary}</div>}
       </summary>
       {children}
     </details>
@@ -122,13 +122,13 @@ export function SectionNav({
   state: SectionState;
 }) {
   return (
-    <nav className="sticky top-16 z-40 -mx-4 px-4 py-2 bg-gray-950/85 backdrop-blur border-b border-gray-800/60 flex flex-wrap items-center gap-2 text-xs">
+    <nav className="sticky top-14 z-40 -mx-4 px-4 py-2 bg-canvas/85 backdrop-blur border-b border-line/60 flex flex-wrap items-center gap-2 text-xs">
       {items.map((item) => (
         <a
           key={item.id}
           href={`#${item.id}`}
           onClick={() => state.toggle(item.id, true)}
-          className="px-2.5 py-1 rounded-md border border-gray-700 bg-gray-900 text-gray-300 hover:text-white"
+          className="px-2.5 py-1 rounded-md border border-line bg-surface text-ink-soft hover:text-ink"
         >
           {item.label}
         </a>
@@ -136,13 +136,13 @@ export function SectionNav({
       <span className="ml-auto flex gap-2">
         <button
           onClick={() => state.setAll(false)}
-          className="px-2.5 py-1 rounded-md border border-gray-700 bg-gray-900 text-gray-400 hover:text-white"
+          className="px-2.5 py-1 rounded-md border border-line bg-surface text-muted hover:text-ink"
         >
           Alle zu
         </button>
         <button
           onClick={() => state.setAll(true)}
-          className="px-2.5 py-1 rounded-md border border-gray-700 bg-gray-900 text-gray-400 hover:text-white"
+          className="px-2.5 py-1 rounded-md border border-line bg-surface text-muted hover:text-ink"
         >
           Alle auf
         </button>

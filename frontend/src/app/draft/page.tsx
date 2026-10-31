@@ -196,7 +196,7 @@ function DraftAssistantContent() {
 
   if (!username || !draftId) {
     return (
-      <div className="glass-panel p-8 text-center">
+      <div className="panel p-8 text-center">
         <p className="text-red-400">Username oder draft_id fehlt in der URL.</p>
         <Link href="/" className="mt-4 inline-block text-green-400 hover:text-green-300">
           ← Zurück zum Dashboard
@@ -215,7 +215,7 @@ function DraftAssistantContent() {
 
   if (error) {
     return (
-      <div className="glass-panel p-8 text-center">
+      <div className="panel p-8 text-center">
         <p className="text-red-400">{error}</p>
         <Link href="/" className="mt-4 inline-block text-green-400 hover:text-green-300">
           ← Zurück zum Dashboard
@@ -231,18 +231,18 @@ function DraftAssistantContent() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 glass-panel p-6 border-green-500/30">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 panel p-6 border-green-500/30">
         <div>
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-3xl font-bold text-white">{metadata?.name}</h1>
+            <h1 className="text-3xl font-bold text-ink">{metadata?.name}</h1>
             {typeLabel && (
               <span className="bg-yellow-600/30 text-yellow-400 border border-yellow-500/50 text-xs px-2 py-1 rounded font-bold uppercase">
                 {typeLabel}
               </span>
             )}
           </div>
-          <p className="text-gray-400 mt-2">
-            Status: <span className="text-white capitalize font-medium">{metadata?.status}</span>
+          <p className="text-muted mt-2">
+            Status: <span className="text-ink capitalize font-medium">{metadata?.status}</span>
             {" | "}
             Dein Slot: <span className="text-green-400 font-bold">{metadata?.user_slot ?? "—"}</span>
             {metadata?.rounds ? ` | ${metadata.rounds} Runden` : ""}
@@ -258,17 +258,11 @@ function DraftAssistantContent() {
             >
               {refreshing ? "Aktualisiere…" : "↻ Board neu laden"}
             </button>
-            <Link
-              href="/"
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors text-sm font-medium"
-            >
-              ← Zurück
-            </Link>
           </div>
           {lastPick && (
-            <div className="text-sm text-gray-400 text-right">
+            <div className="text-sm text-muted text-right">
               Letzter Pick:{" "}
-              <span className="text-white font-medium">
+              <span className="text-ink font-medium">
                 Runde {lastPick.round}, Pick {lastPick.draft_slot}
               </span>
             </div>
@@ -280,8 +274,8 @@ function DraftAssistantContent() {
         <div className="space-y-4 mb-8">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="w-2 h-8 bg-yellow-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-white">Top-Empfehlungen</h2>
-            <span className="text-sm text-gray-500">
+            <h2 className="text-xl font-bold text-ink">Top-Empfehlungen</h2>
+            <span className="text-sm text-muted">
               Vier Fragen, vier Antworten — Value, Bedarf, Sofortnutzen, Marktwert
             </span>
           </div>
@@ -289,14 +283,14 @@ function DraftAssistantContent() {
             {recommendations.map((rec, idx) => (
               <div
                 key={idx}
-                className={`glass-panel p-5 border-t-4 ${REC_COLORS[rec.type]} flex flex-col gap-3 transition-transform hover:-translate-y-1`}
+                className={`panel p-5 border-t-4 ${REC_COLORS[rec.type]} flex flex-col gap-3 transition-transform hover:-translate-y-1`}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-2xl">{REC_ICONS[rec.type]}</span>
-                  <h3 className="text-base font-bold text-white leading-tight">{rec.title}</h3>
+                  <h3 className="text-base font-bold text-ink leading-tight">{rec.title}</h3>
                 </div>
                 <div>
-                  <div className="text-lg font-bold text-white flex items-center gap-2 flex-wrap">
+                  <div className="text-lg font-bold text-ink flex items-center gap-2 flex-wrap">
                     {eligOf(rec.player).map((pos) => (
                       <PosBadge key={pos} pos={pos} />
                     ))}
@@ -307,7 +301,7 @@ function DraftAssistantContent() {
                       </span>
                     )}
                   </div>
-                  <div className="text-sm text-gray-400">
+                  <div className="text-sm text-muted">
                     {rec.player.team} • Age {rec.player.age}
                   </div>
                 </div>
@@ -317,18 +311,18 @@ function DraftAssistantContent() {
                     was chosen on projected points. */}
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <div>
-                    <span className="text-[10px] text-gray-500 uppercase tracking-wider block">DVS</span>
+                    <span className="text-[10px] text-muted uppercase tracking-wider block">DVS</span>
                     <span className="font-bold text-blue-400">{rec.player.dvs}</span>
                   </div>
                   {(() => {
                     const metric = REC_METRIC[rec.type](rec.player);
                     return (
                       <div>
-                        <span className="text-[10px] text-gray-300 uppercase tracking-wider block font-semibold">
+                        <span className="text-[10px] text-ink-soft uppercase tracking-wider block font-semibold">
                           {metric.label}
                         </span>
                         <span
-                          className={`font-bold ${metric.value >= 0 ? "text-green-400" : "text-gray-400"}`}
+                          className={`font-bold ${metric.value >= 0 ? "text-green-400" : "text-muted"}`}
                         >
                           {metric.signed ? signed(metric.value) : metric.value}
                         </span>
@@ -336,11 +330,11 @@ function DraftAssistantContent() {
                     );
                   })()}
                   <div>
-                    <span className="text-[10px] text-gray-500 uppercase tracking-wider block">Proj</span>
+                    <span className="text-[10px] text-muted uppercase tracking-wider block">Proj</span>
                     <span className="font-bold text-purple-400">{rec.player.pts}</span>
                   </div>
                 </div>
-                <p className="text-xs text-gray-300 bg-gray-900/50 p-3 rounded border border-gray-700 leading-relaxed mt-auto">
+                <p className="text-xs text-ink-soft bg-surface/50 p-3 rounded border border-line leading-relaxed mt-auto">
                   {rec.reason}
                 </p>
               </div>
@@ -353,11 +347,11 @@ function DraftAssistantContent() {
         <div className="lg:col-span-1 space-y-4">
           <div className="flex items-center gap-2 mb-4">
             <div className="w-2 h-8 bg-purple-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-white">Dein Teambedarf</h2>
+            <h2 className="text-xl font-bold text-ink">Dein Teambedarf</h2>
           </div>
 
           {needs.length === 0 ? (
-            <div className="glass-panel p-6 text-center text-gray-400">
+            <div className="panel p-6 text-center text-muted">
               Kein Liga-Kontext für diesen Draft gefunden, oder dein Roster ist ausgeglichen.
             </div>
           ) : (
@@ -368,17 +362,17 @@ function DraftAssistantContent() {
             </div>
           )}
 
-          <div className="glass-panel p-6 border-blue-500/30 bg-blue-900/10 mt-6">
+          <div className="panel p-6 border-blue-500/30 bg-blue-900/10 mt-6">
             <h3 className="text-blue-300 font-bold mb-2">💡 Draft-Strategie</h3>
-            <p className="text-sm text-gray-300">{strategyHint(sport, metadata?.is_rookie_draft)}</p>
+            <p className="text-sm text-ink-soft">{strategyHint(sport, metadata?.is_rookie_draft)}</p>
           </div>
         </div>
 
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="w-2 h-8 bg-green-500 rounded-full"></div>
-            <h2 className="text-xl font-bold text-white">Best Available</h2>
-            <span className="text-sm text-gray-500">
+            <h2 className="text-xl font-bold text-ink">Best Available</h2>
+            <span className="text-sm text-muted">
               {visibleBoard.length} von {bestAvailable.length}
             </span>
           </div>
@@ -395,15 +389,15 @@ function DraftAssistantContent() {
             needs={needs}
           />
 
-          <div className="glass-panel overflow-hidden">
+          <div className="panel overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-800">
-                <thead className="bg-gray-900/50">
+              <table className="min-w-full divide-y divide-line">
+                <thead className="bg-surface/50">
                   <tr>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wider">
                       Spieler
                     </th>
-                    <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-muted uppercase tracking-wider">
                       Status
                     </th>
                     <th
@@ -424,7 +418,7 @@ function DraftAssistantContent() {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-800 bg-transparent">
+                <tbody className="divide-y divide-line bg-transparent">
                   {visibleBoard.map((player) => {
                     const elig = eligOf(player);
                     const isNeeded = needs.some((n) => elig.includes(n.pos));
@@ -432,7 +426,7 @@ function DraftAssistantContent() {
                     return (
                       <tr
                         key={player.id}
-                        className={`transition-colors hover:bg-gray-800/50 ${isNeeded ? "bg-green-900/10" : ""}`}
+                        className={`transition-colors hover:bg-raised/50 ${isNeeded ? "bg-green-900/10" : ""}`}
                       >
                         <td className="px-4 py-3 whitespace-nowrap">
                           <div className="flex items-center gap-3">
@@ -442,7 +436,7 @@ function DraftAssistantContent() {
                               ))}
                             </div>
                             <div>
-                              <div className="text-sm font-medium text-white flex items-center gap-2">
+                              <div className="text-sm font-medium text-ink flex items-center gap-2">
                                 {player.name}
                                 {isNeeded && (
                                   <span className="w-2 h-2 rounded-full bg-green-500" title="Passt auf deinen Bedarf"></span>
@@ -453,7 +447,7 @@ function DraftAssistantContent() {
                                   </span>
                                 )}
                               </div>
-                              <div className="text-xs text-gray-500">
+                              <div className="text-xs text-muted">
                                 {player.team} • Age {player.age}
                               </div>
                             </div>
@@ -475,7 +469,7 @@ function DraftAssistantContent() {
                         </td>
                         <td
                           className={`px-4 py-3 whitespace-nowrap text-right text-sm font-bold ${
-                            player.edge >= 0 ? "text-green-400" : "text-gray-500"
+                            player.edge >= 0 ? "text-green-400" : "text-muted"
                           }`}
                           title={`${player.edge_pos ?? player.pos}-Ersatzniveau: ${player.replacement} DVS`}
                         >
@@ -484,10 +478,10 @@ function DraftAssistantContent() {
                         <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-blue-300">
                           {player.pts}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-white">
+                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-ink">
                           {player.dvs}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-gray-400">
+                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-muted">
                           {player.rvs}
                         </td>
                       </tr>
@@ -495,7 +489,7 @@ function DraftAssistantContent() {
                   })}
                   {visibleBoard.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted">
                         Kein verfügbarer Spieler auf dieser Position.
                       </td>
                     </tr>
@@ -512,7 +506,7 @@ function DraftAssistantContent() {
 
 export default function DraftAssistant() {
   return (
-    <Suspense fallback={<div className="text-center p-12 text-gray-400">Lade Assistant…</div>}>
+    <Suspense fallback={<div className="text-center p-12 text-muted">Lade Assistant…</div>}>
       <DraftAssistantContent />
     </Suspense>
   );

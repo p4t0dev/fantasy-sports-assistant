@@ -70,6 +70,9 @@ export type Player = {
   horizon?: { week: number; opp: string | null; pts: number; games?: number }[] | null;
   /** This week's opponent; null on bye or off-season. */
   opp?: string | null;
+  /** How hard `opp` is for his position, by points allowed so far. NFL only;
+   *  null while the defense has too few games behind it. */
+  opp_tier?: "hard" | "ok" | "easy" | null;
   bye?: boolean;
   /** First bye week inside the horizon, if any. */
   bye_week?: number | null;

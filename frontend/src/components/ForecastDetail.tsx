@@ -43,7 +43,7 @@ function WeightBar({ weights }: { weights: { S: number; F: number; Q: number } }
   const parts = (["S", "F", "Q"] as const).filter((k) => weights[k] > 0);
   return (
     <div className="space-y-1">
-      <div className="flex h-2 w-full overflow-hidden rounded-full bg-gray-800">
+      <div className="flex h-2 w-full overflow-hidden rounded-full bg-raised">
         {parts.map((k) => (
           <div
             key={k}
@@ -70,45 +70,45 @@ export function ForecastDetail({ player }: { player: Player }) {
   const weeks = Object.entries(player.usage?.pts_by_week ?? {});
   return (
     <details className="mt-1.5 group/fc">
-      <summary className="cursor-pointer list-none select-none text-[11px] text-gray-500 hover:text-gray-300">
+      <summary className="cursor-pointer list-none select-none text-[11px] text-muted hover:text-ink-soft">
         <span className="group-open/fc:hidden">▸</span>
         <span className="hidden group-open/fc:inline">▾</span> Wie kommt die {fc.P.toFixed(1)} zustande?
       </summary>
-      <div className="mt-2 space-y-2 rounded-md border border-gray-800 bg-gray-900/60 p-3 text-[11px] text-gray-300">
+      <div className="mt-2 space-y-2 rounded-md border border-line bg-surface/60 p-3 text-[11px] text-ink-soft">
         <WeightBar weights={fc.weights} />
         <ul className="space-y-0.5">
           {fc.explain.map((line, i) => (
             <li
               key={i}
-              className={i === fc.explain.length - 1 ? "font-semibold text-white" : ""}
+              className={i === fc.explain.length - 1 ? "font-semibold text-ink" : ""}
             >
               {line}
             </li>
           ))}
         </ul>
         {weeks.length > 0 && (
-          <div className="text-gray-400">
+          <div className="text-muted">
             Echte Punkte:{" "}
             {weeks.map(([w, pts]) => (
               <span key={w} className="mr-2">
-                W{w} <span className="text-gray-200">{pts}</span>
+                W{w} <span className="text-ink">{pts}</span>
               </span>
             ))}
           </div>
         )}
         {weeks.length > 0 && player.usage?.xfp_by_week && (
-          <div className="text-gray-400">
+          <div className="text-muted">
             Erwartet aus Nutzung:{" "}
             {Object.entries(player.usage.xfp_by_week)
               .filter(([, x]) => x != null)
               .map(([w, x]) => (
                 <span key={w} className="mr-2">
-                  W{w} <span className="text-gray-200">{x}</span>
+                  W{w} <span className="text-ink">{x}</span>
                 </span>
               ))}
           </div>
         )}
-        {player.usage?.label && <div className="text-gray-500">Nutzung {player.usage.label}</div>}
+        {player.usage?.label && <div className="text-muted">Nutzung {player.usage.label}</div>}
         <Link href="/prognose" className="inline-block text-blue-400 hover:text-blue-300">
           So funktioniert die Prognose →
         </Link>
@@ -141,34 +141,34 @@ export function HorizonDetail({ player }: { player: Player }) {
   const total = weeks.reduce((sum, w) => sum + w.pts, 0);
   return (
     <details className="mt-1.5 group/hz">
-      <summary className="cursor-pointer list-none select-none text-[11px] text-gray-500 hover:text-gray-300">
+      <summary className="cursor-pointer list-none select-none text-[11px] text-muted hover:text-ink-soft">
         <span className="group-open/hz:hidden">▸</span>
         <span className="hidden group-open/hz:inline">▾</span> Prognose W{weeks[0].week}–
         {weeks[weeks.length - 1].week}: {total.toFixed(1)} Pkt
       </summary>
-      <div className="mt-2 rounded-md border border-gray-800 bg-gray-900/60 p-3 text-[11px] text-gray-300 space-y-2">
+      <div className="mt-2 rounded-md border border-line bg-surface/60 p-3 text-[11px] text-ink-soft space-y-2">
         <div className="grid grid-cols-5 gap-1 text-center">
           {weeks.map((w) => (
-            <div key={w.week} className="rounded bg-gray-800/60 py-1">
-              <div className="text-gray-500">W{w.week}</div>
-              <div className={w.opp ? "text-white font-medium" : "text-red-300"}>
+            <div key={w.week} className="rounded bg-raised/60 py-1">
+              <div className="text-muted">W{w.week}</div>
+              <div className={w.opp ? "text-ink font-medium" : "text-red-300"}>
                 {w.opp ? w.pts.toFixed(1) : "Bye"}
               </div>
-              <div className="text-gray-500 truncate" title={w.opp ?? undefined}>
+              <div className="text-muted truncate" title={w.opp ?? undefined}>
                 {w.games != null ? `${w.games} ${w.games === 1 ? "Spiel" : "Spiele"}` : w.opp ? `vs ${w.opp}` : ""}
               </div>
             </div>
           ))}
         </div>
         {player.pts_season != null && (
-          <div className="text-gray-500">
+          <div className="text-muted">
             Zum Vergleich Sleepers Saisonprognose:{" "}
             {(player.pts_season / (player.season_games ?? 17)).toFixed(1)}{" "}
             {player.games_week != null ? "pro Spiel" : "pro Woche"}
           </div>
         )}
         {player.forecast && (
-          <ul className="space-y-0.5 text-gray-400">
+          <ul className="space-y-0.5 text-muted">
             {player.forecast.explain.map((line, i) => (
               <li key={i}>{i === 0 ? `W${weeks[0].week}: ` : ""}{line}</li>
             ))}
@@ -200,14 +200,14 @@ export function MatchupLine({
 }) {
   if (!stance) return null;
   const tone =
-    stance.kind === "favorite" ? "text-emerald-300" : stance.kind === "underdog" ? "text-orange-300" : "text-gray-300";
+    stance.kind === "favorite" ? "text-emerald-300" : stance.kind === "underdog" ? "text-orange-300" : "text-ink-soft";
   return (
-    <p className="text-xs text-gray-400">
+    <p className="text-xs text-muted">
       {stance.opponent ? (
         <>
-          Matchup vs <span className="text-gray-200">{stance.opponent}</span>:{" "}
-          <span className="text-gray-200">{stance.my_total}</span> :{" "}
-          <span className="text-gray-200">{stance.opp_total}</span>{" "}
+          Matchup vs <span className="text-ink">{stance.opponent}</span>:{" "}
+          <span className="text-ink">{stance.my_total}</span> :{" "}
+          <span className="text-ink">{stance.opp_total}</span>{" "}
           <span className={tone}>
             ({(stance.margin ?? 0) > 0 ? "+" : ""}
             {stance.margin})
@@ -227,21 +227,21 @@ export function LockCalls({ calls }: { calls?: LockCall[] }) {
   return (
     <ul className="space-y-1 text-xs">
       {calls.map((c) => (
-        <li key={c.id} className={c.lock ? "text-emerald-300" : "text-gray-400"}>
+        <li key={c.id} className={c.lock ? "text-emerald-300" : "text-muted"}>
           {c.lock ? "Einlocken" : c.via ? "Nicht einlocken" : "Weiterspielen"}:{" "}
-          <strong className="text-white">{c.name}</strong> — letztes Spiel {c.score} Pkt{" "}
+          <strong className="text-ink">{c.name}</strong> — letztes Spiel {c.score} Pkt{" "}
           {c.lock ? (
             <>≥ {c.open}, was sein Platz ohne Lock noch bringt</>
           ) : c.via ? (
             <>
-              &lt; {c.open} mit offenem Platz: <strong className="text-white">{c.via}</strong> übernimmt
+              &lt; {c.open} mit offenem Platz: <strong className="text-ink">{c.via}</strong> übernimmt
             </>
           ) : (
             <>&lt; {c.open} Restwert der Woche</>
           )}
         </li>
       ))}
-      <li className="text-[10px] text-gray-500">
+      <li className="text-[10px] text-muted">
         Pro Startplatz zählt ein Spiel pro Woche. Ein eingelockter Platz ist für den Rest der Woche
         zu — abgewogen wird gegen alles, was der Platz offen noch bringen kann, auch Bankspieler mit
         späteren Spielen. Einlocken geht bis zum Beginn seines nächsten Spiels und nur aus der

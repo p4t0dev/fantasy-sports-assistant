@@ -19,10 +19,10 @@ function Side({ side, tone }: { side: WaiverMoveSide; tone: string }) {
     <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
       <PosBadge pos={side.pos} />
       <span className={`${tone} truncate`}>{side.name}</span>
-      <span className="text-[10px] text-gray-500">{side.team}</span>
+      <span className="text-[10px] text-muted">{side.team}</span>
       <InjuryBadge injury={side.injury} />
       {side.per_week != null && (
-        <span className="text-[11px] text-gray-400">{side.per_week.toFixed(1)}/Wo</span>
+        <span className="text-[11px] text-muted">{side.per_week.toFixed(1)}/Wo</span>
       )}
     </span>
   );
@@ -31,13 +31,13 @@ function Side({ side, tone }: { side: WaiverMoveSide; tone: string }) {
 function Move({ move }: { move: WaiverMove }) {
   const lineup = move.kind === "lineup";
   return (
-    <li className="rounded-md border border-gray-800 bg-gray-900/50 p-2.5 space-y-1.5">
+    <li className="rounded-md border border-line bg-surface/50 p-2.5 space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span
           className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
             lineup
               ? "text-green-300 border-green-700 bg-green-900/30"
-              : "text-gray-400 border-gray-700 bg-gray-800/60"
+              : "text-muted border-line bg-raised/60"
           }`}
         >
           {lineup
@@ -53,17 +53,17 @@ function Move({ move }: { move: WaiverMove }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-bold text-green-400 w-9 shrink-0">ADD</span>
-          <Side side={move.add} tone="text-white" />
+          <Side side={move.add} tone="text-ink" />
         </div>
         {move.drop && (
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold text-red-400 w-9 shrink-0">DROP</span>
-            <Side side={move.drop} tone="text-gray-400" />
+            <Side side={move.drop} tone="text-muted" />
           </div>
         )}
       </div>
-      <details className="text-[11px] text-gray-400">
-        <summary className="cursor-pointer list-none select-none hover:text-gray-200">▸ Warum?</summary>
+      <details className="text-[11px] text-muted">
+        <summary className="cursor-pointer list-none select-none hover:text-ink">▸ Warum?</summary>
         <p className="mt-1">{move.reason}</p>
       </details>
     </li>
@@ -81,9 +81,9 @@ function LeagueWaivers({ league, linkParams }: { league: WaiverLeague; linkParam
   const faab = league.faab;
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs text-gray-400">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs text-muted">
         <span>
-          <span className="text-gray-300">{league.profile.label}</span> · {scheduleText(league)}
+          <span className="text-ink-soft">{league.profile.label}</span> · {scheduleText(league)}
           {faab?.left != null && (
             <>
               {" · "}
@@ -101,7 +101,7 @@ function LeagueWaivers({ league, linkParams }: { league: WaiverLeague; linkParam
         </Link>
       </div>
       <WeekFixes fixes={league.week_fixes} />
-      {league.moves_note && <p className="text-[11px] text-gray-500">{league.moves_note}</p>}
+      {league.moves_note && <p className="text-[11px] text-muted">{league.moves_note}</p>}
       {league.moves.length > 0 ? (
         <ul className="space-y-2">
           {league.moves.map((m, i) => (
@@ -109,7 +109,7 @@ function LeagueWaivers({ league, linkParams }: { league: WaiverLeague; linkParam
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-gray-500">Keine sinnvollen Moves gefunden.</p>
+        <p className="text-sm text-muted">Keine sinnvollen Moves gefunden.</p>
       )}
     </div>
   );
@@ -144,26 +144,26 @@ export default function WaiverOverview({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-400">
+      <p className="text-sm text-muted">
         {waiverSummary(leagues)} · Punkte = Prognose Ø pro Woche über die nächsten 5 Wochen
       </p>
 
       {upgrade.map((league) => (
-        <div key={league.league_id} className="glass-panel p-5 border-l-4 border-l-green-500 bg-green-900/5 space-y-3">
-          <h3 className="text-lg font-bold text-white">{league.name}</h3>
+        <div key={league.league_id} className="panel p-5 border-l-4 border-l-green-500 bg-green-900/5 space-y-3">
+          <h3 className="text-lg font-bold text-ink">{league.name}</h3>
           <LeagueWaivers league={league} linkParams={linkParams} />
         </div>
       ))}
 
       {depth.map((league) => (
-        <details key={league.league_id} className="glass-panel p-4 group">
+        <details key={league.league_id} className="panel p-4 group">
           <summary className="cursor-pointer list-none select-none flex flex-wrap items-baseline justify-between gap-2">
-            <span className="text-white font-medium">
-              <span className="text-gray-500 group-open:hidden">▸ </span>
-              <span className="text-gray-500 hidden group-open:inline">▾ </span>
+            <span className="text-ink font-medium">
+              <span className="text-muted group-open:hidden">▸ </span>
+              <span className="text-muted hidden group-open:inline">▾ </span>
               {league.name}
             </span>
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-muted">
               {league.moves.length ? `${league.moves.length} Kadertiefe-Moves` : "nichts zu tun"}
               {league.faab?.left != null ? ` · ${league.faab.left} FAAB` : ""}
             </span>
@@ -175,7 +175,7 @@ export default function WaiverOverview({
       ))}
 
       {leagues.some((l) => l.skipped) && (
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted">
           Ohne Waiver-Plan:{" "}
           {leagues
             .filter((l) => l.skipped)
