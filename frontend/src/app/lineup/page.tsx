@@ -105,7 +105,8 @@ function PlayerRow({
         <div className="text-[13px] text-muted flex items-center gap-1.5 flex-wrap">
           {sub}
           <span>{player.team}</span>
-          {meta && <span className="truncate">· {meta}</span>}
+          {/* Basis 0: this takes what is left of the line, it never opens a new one. */}
+          {meta && <span className="basis-0 grow min-w-0 truncate">· {meta}</span>}
           <LockBadge player={player} />
         </div>
         {note && <div className="text-[13px] font-semibold text-change-ink">{note}</div>}
@@ -171,7 +172,8 @@ function SeatRow({
       player={optimal}
       changed={!!displaced}
       sub={showPos ? <EligBadges player={optimal} /> : undefined}
-      meta={backup ? `Backup: ${backup}` : undefined}
+      // The surname: the full name would not fit next to the position badge.
+      meta={backup ? `Backup ${backup.split(" ").slice(1).join(" ") || backup}` : undefined}
       note={
         displaced ? (
           <>
