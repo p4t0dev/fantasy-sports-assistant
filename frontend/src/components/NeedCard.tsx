@@ -34,11 +34,11 @@ export default function NeedCard({ need }: { need: Need }) {
   const badge = SEVERITY_BADGES[need.severity] ?? SEVERITY_BADGES[1];
 
   return (
-    <div className={`glass-panel p-4 border-l-4 ${tone}`}>
+    <div className={`panel p-4 border-l-4 ${tone}`}>
       <div className="flex justify-between items-center gap-2 mb-2">
         <div className="flex items-center gap-2">
           <PosBadge pos={need.pos} className="text-xs px-2 py-1" />
-          <span className="font-bold text-white text-lg">{need.pos}</span>
+          <span className="font-bold text-ink text-lg">{need.pos}</span>
         </div>
         <span
           className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase border ${badge}`}
@@ -47,7 +47,7 @@ export default function NeedCard({ need }: { need: Need }) {
         </span>
       </div>
 
-      <p className="text-xs text-gray-300 leading-snug">{need.reason}</p>
+      <p className="text-xs text-ink-soft leading-snug">{need.reason}</p>
 
       {/* The headcount is the half nobody believes on sight — "1 von 9 über
           Liga-Startniveau" invites the question which nine, measured how. Both
@@ -64,30 +64,30 @@ export default function NeedCard({ need }: { need: Need }) {
                 key={entry.name}
                 className="flex items-baseline justify-between gap-3 text-[11px]"
               >
-                <span className={entry.startable ? "text-green-300" : "text-gray-400"}>
+                <span className={entry.startable ? "text-green-300" : "text-muted"}>
                   {entry.startable ? "✓" : "·"} {entry.name}
                 </span>
                 <span
-                  className={`font-mono ${entry.startable ? "text-green-300" : "text-gray-500"}`}
+                  className={`font-mono ${entry.startable ? "text-green-300" : "text-muted"}`}
                 >
                   {entry.value}
                 </span>
               </li>
             ))}
             {need.replacement != null && (
-              <li className="flex items-baseline justify-between gap-3 text-[11px] pt-1 border-t border-gray-700/60">
-                <span className="text-gray-500">
+              <li className="flex items-baseline justify-between gap-3 text-[11px] pt-1 border-t border-line/60">
+                <span className="text-muted">
                   Liga-Startniveau {need.pos}
                   {need.unit ? ` · ${need.unit}` : ""}
                 </span>
-                <span className="font-mono text-gray-400">{need.replacement}</span>
+                <span className="font-mono text-muted">{need.replacement}</span>
               </li>
             )}
           </ul>
         </details>
       )}
 
-      <p className="text-[10px] text-gray-500 mt-2">
+      <p className="text-[10px] text-muted mt-2">
         {need.startable}/{need.slots} auf Startniveau · {need.depth} im Kader ·{" "}
         {need.fixed_slots} feste Slots
       </p>

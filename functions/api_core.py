@@ -545,6 +545,7 @@ def weekly_points(sport, scoring_settings, players_db):
             row = pts.setdefault(str(pid), [0.0] * len(weeks))
             row[i] = round(calculate_custom_score(p_stats, pos, scoring_settings, sport), 2)
 
+    allowed = points_allowed_table(sport, scoring_settings, players_db or {})
     return {
         "sport": sport,
         "pace_weeks": projections.SEASON_GAMES["nfl"],
@@ -555,7 +556,8 @@ def weekly_points(sport, scoring_settings, players_db):
         "date": data["weeks"][str(weeks[0])].get("date", {}),
         "today": _today_us(),
         "usage": usage_signals(sport, scoring_settings, players_db or {}),
-        "allowed": points_allowed_table(sport, scoring_settings, players_db or {}),
+        "allowed": allowed,
+        "opp_tiers": forecast.opponent_tiers(allowed[0], allowed[2]),
         "prev": previous_season_rates(sport, scoring_settings, players_db or {}),
         "context": load_gameday(sport, week),
     }
@@ -2216,7 +2218,7 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None, star
     if not weekly:
         return {"pts_week": None, "pts_week_base": None, "pts_horizon": None,
                 "pts_pace": None, "pace_weeks": None, "season_games": None,
-                "horizon": None, "opp": None,
+                "horizon": None, "opp": None, "opp_tier": None,
                 "bye": False, "bye_week": None, "locked": False, "usage": None,
                 "forecast": None, "games_week": None, "lock": None, "spread": None}
     if weekly.get("sport") == "nba":
@@ -2260,6 +2262,10 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None, star
         "season_games": projections.SEASON_GAMES[weekly["sport"]],
         "horizon": horizon,
         "opp": opp,
+        # How hard this opponent is for his position: red, yellow or green in
+        # the app. Follows the defense's rank, so it says nothing the forecast
+        # has not already priced in.
+        "opp_tier": (weekly.get("opp_tiers") or {}).get((opp, forecast.group_of(player.get("position")))),
         "bye": bool(byes) and byes[0] == weeks[0],
         "bye_week": byes[0] if byes else None,
         # His game is over: whatever he scored is on the board, and he can be
@@ -2406,6 +2412,7 @@ def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=Fa
         "season_games": projections.SEASON_GAMES[weekly["sport"]],
         "horizon": horizon,
         "opp": horizon[0]["opp"],
+        "opp_tier": None,
         "bye": not now["sched"],
         "bye_week": next((h["week"] for h in horizon if not h["opp"]), None),
         "locked": locked,

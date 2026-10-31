@@ -1,26 +1,26 @@
 "use client";
 
 import type { Player, Injury } from "@/lib/types";
-import { posTone, slotTone, slotLabel } from "@/lib/positions";
+import { posTone, slotTone, slotLabel, slotShort } from "@/lib/positions";
 
 // These badges are the "why" behind every number on the site. They used to live
 // inline in the waiver page and were duplicated, in a reduced form, in the
 // lineup page - so a drop candidate and a bench player showed nothing at all
 // while a waiver target explained itself. One definition, used everywhere.
 
-export function InjuryBadge({ injury }: { injury?: Injury | null }) {
+export function InjuryBadge({ injury, short = false }: { injury?: Injury | null; short?: boolean }) {
   if (!injury?.status) return null;
   const critical = injury.severity >= 3;
   return (
     <span
-      title={injury.label ?? undefined}
-      className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border ${
+      title={injury.label ?? injury.status}
+      className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border shrink-0 font-sans not-italic ${
         critical
           ? "bg-red-900/40 text-red-300 border-red-700"
           : "bg-yellow-900/40 text-yellow-300 border-yellow-700"
       }`}
     >
-      {injury.status}
+      {short && injury.status.length > 3 ? injury.status[0] : injury.status}
     </span>
   );
 }
@@ -33,7 +33,7 @@ export function TrendBadge({ player }: { player: Player }) {
       className={`text-[10px] px-1.5 py-0.5 rounded font-bold border ${
         rising
           ? "bg-emerald-900/40 text-emerald-300 border-emerald-700"
-          : "bg-gray-800 text-gray-400 border-gray-700"
+          : "bg-raised text-muted border-line"
       }`}
     >
       {rising ? "▲" : "▼"} {player.trend.label}
@@ -116,13 +116,68 @@ export function startPts(player: Player): number {
   return player.pts_week ?? player.pts;
 }
 
+const TIER_TONE = {
+  hard: { chip: "bg-tier-hard text-white", label: "schwerer Gegner für seine Position" },
+  ok: { chip: "bg-tier-ok text-[#1a1400]", label: "mittlerer Gegner für seine Position" },
+  easy: { chip: "bg-tier-easy text-[#06281a]", label: "leichter Gegner für seine Position" },
+} as const;
+
+const NEUTRAL_CHIP = "bg-raised text-ink-soft";
+
+/** The opponents in the legend's order, for whoever draws the legend. */
+export const TIER_LEGEND = [
+  { label: "schwer", chip: TIER_TONE.hard.chip },
+  { label: "okay", chip: TIER_TONE.ok.chip },
+  { label: "leicht", chip: TIER_TONE.easy.chip },
+];
+
+/** NBA Lock-In: this game is worth locking. */
+export function LockBadge({ player }: { player: Player }) {
+  if (!player.lock || player.lock.final || !player.lock.lock) return null;
+  return (
+    <span
+      title={`Letztes Spiel ${player.lock.score} Pkt — mehr, als sein Platz ohne Lock noch bringt (${player.lock.open ?? player.lock.rest}). Einlocken, falls nicht schon geschehen.`}
+      className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border bg-emerald-900/40 text-emerald-300 border-emerald-700"
+    >
+      Einlocken
+    </span>
+  );
+}
+
+/** The opponent column: who he plays, coloured by how hard that is for his
+ *  position - or why there is no opponent to name. */
+export function OppChip({ player }: { player: Player }) {
+  const base = "block py-1 text-center text-[13px] font-bold leading-tight";
+  if (player.locked) {
+    return <span title="Sein Spiel ist vorbei — er kann weder rein noch raus." className={`${base} ${NEUTRAL_CHIP}`}>🔒</span>;
+  }
+  if (player.bye) return <span className={`${base} ${NEUTRAL_CHIP}`}>Bye</span>;
+  if (player.games_week != null) {
+    return (
+      <span
+        title={player.opp ? `vs ${player.opp.split("/").join(", ")}` : undefined}
+        className={`${base} ${NEUTRAL_CHIP}`}
+      >
+        {player.games_week} Sp.
+      </span>
+    );
+  }
+  if (!player.opp) return <span className={`${base} text-muted`}>–</span>;
+  const tier = player.opp_tier ? TIER_TONE[player.opp_tier] : null;
+  return (
+    <span title={tier?.label} className={`${base} ${tier?.chip ?? NEUTRAL_CHIP}`}>
+      {player.opp}
+    </span>
+  );
+}
+
 /** Who he plays this week - or why he will not play for you. */
 export function MatchupBadge({ player }: { player: Player }) {
   if (player.locked) {
     return (
       <span
         title="Sein Spiel ist vorbei — er kann weder rein noch raus."
-        className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border bg-gray-800 text-gray-400 border-gray-600"
+        className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border bg-raised text-muted border-line"
       >
         🔒 gespielt
       </span>
@@ -141,30 +196,29 @@ export function MatchupBadge({ player }: { player: Player }) {
     return (
       <span className="flex items-center gap-1">
         <span title={player.opp ? `vs ${player.opp.split("/").join(", ")}` : undefined}
-              className="text-[10px] text-gray-500 font-medium">
+              className="text-[10px] text-muted font-medium">
           {player.games_week} {player.games_week === 1 ? "Spiel" : "Spiele"}
         </span>
-        {player.lock && !player.lock.final && player.lock.lock && (
-          <span
-            title={`Letztes Spiel ${player.lock.score} Pkt — mehr, als sein Platz ohne Lock noch bringt (${player.lock.open ?? player.lock.rest}). Einlocken, falls nicht schon geschehen.`}
-            className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border bg-emerald-900/40 text-emerald-300 border-emerald-700"
-          >
-            Einlocken
-          </span>
-        )}
+        <LockBadge player={player} />
       </span>
     );
   }
   if (!player.opp) return null;
-  return <span className="text-[10px] text-gray-500 font-medium">vs {player.opp}</span>;
+  const tier = player.opp_tier ? TIER_TONE[player.opp_tier] : null;
+  if (!tier) return <span className="text-[10px] text-muted font-medium">vs {player.opp}</span>;
+  return (
+    <span title={tier.label} className={`text-[10px] px-1 font-bold ${tier.chip}`}>
+      vs {player.opp}
+    </span>
+  );
 }
 
 /** Projected season points — the number the lineup is actually built from. */
 export function PointsPill({ player, label = "PROJ" }: { player: Player; label?: string }) {
   return (
     <div className="flex flex-col items-end">
-      <span className="text-sm font-bold text-blue-300">{player.pts}</span>
-      <span className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</span>
+      <span className="text-sm font-bold text-ink">{player.pts}</span>
+      <span className="text-[10px] text-muted uppercase tracking-wider">{label}</span>
     </div>
   );
 }
@@ -208,14 +262,28 @@ export function EligBadges({ player }: { player: Player }) {
 }
 
 /** A roster seat. Wider than a position badge because the label can read
-    "WR/RB FLEX", and coloured by the slot rather than by whoever sits in it. */
-export function SlotBadge({ slot, accepts }: { slot: string; accepts?: string[] }) {
+    "WR/RB FLEX", and coloured by the slot rather than by whoever sits in it.
+    `compact` fits a table column; `highlight` says: this seat changes. */
+export function SlotBadge({
+  slot,
+  accepts,
+  compact = false,
+  highlight = false,
+}: {
+  slot: string;
+  accepts?: string[];
+  compact?: boolean;
+  highlight?: boolean;
+}) {
+  const tone = highlight ? "bg-highlight text-on-highlight border-transparent" : slotTone(slot).chip;
   return (
     <div
       title={accepts?.join(", ")}
-      className={`w-20 sm:w-24 shrink-0 text-center py-1 rounded-md text-[11px] font-bold border ${slotTone(slot).chip}`}
+      className={`shrink-0 text-center border -skew-x-10 font-display font-bold ${tone} ${
+        compact ? "py-0.5 text-base leading-tight" : "w-20 sm:w-24 py-1 text-[13px]"
+      }`}
     >
-      {slotLabel(slot)}
+      {compact ? slotShort(slot) : slotLabel(slot)}
     </div>
   );
 }

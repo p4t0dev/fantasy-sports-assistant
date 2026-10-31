@@ -87,6 +87,22 @@ class ForecastTest(unittest.TestCase):
         self.assertEqual(games["AAA"], 2)
         self.assertEqual(avg["WR"], 25.0)
 
+    def test_opponent_tiers_are_thirds_within_the_group(self):
+        per_game = {(team, "WR"): pts for team, pts in zip("ABCDEF", (10, 12, 20, 22, 30, 32))}
+        # Most allowed to backs, fewest to receivers: ranked per group.
+        per_game.update({("A", "RB"): 40, ("B", "RB"): 5, ("C", "RB"): 20})
+        tiers = forecast.opponent_tiers(per_game, dict.fromkeys("ABCDEF", 8))
+        self.assertEqual([tiers[(t, "WR")] for t in "ABCDEF"],
+                         ["hard", "hard", "ok", "ok", "easy", "easy"])
+        self.assertEqual(tiers[("A", "RB")], "easy")
+        self.assertEqual(tiers[("B", "RB")], "hard")
+
+    def test_opponent_tier_needs_games_behind_it(self):
+        per_game = {("A", "WR"): 40, ("B", "WR"): 10}
+        tiers = forecast.opponent_tiers(per_game, {"A": 2, "B": 8})
+        self.assertNotIn(("A", "WR"), tiers)
+        self.assertIn(("B", "WR"), tiers)
+
 
 if __name__ == "__main__":
     unittest.main()

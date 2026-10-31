@@ -280,6 +280,31 @@ def points_allowed(games):
     return per_game, league_avg, {opp: len(w) for opp, w in weeks.items()}
 
 
+# Games a defense needs behind it before its rank says anything.
+TIER_MIN_GAMES = 3
+
+
+def opponent_tiers(per_game, games_played):
+    """How hard each defense is for a position group, in thirds of the league.
+
+    `per_game` and `games_played` as `points_allowed` returns them. Returns
+    {(opp, group): "hard" | "ok" | "easy"}; a defense with too few games has
+    no entry. Ranked within the group rather than against the league average:
+    a fixed percentage would mean something else for a kicker than for a
+    wide receiver.
+    """
+    by_group = {}
+    for (opp, group), pts in per_game.items():
+        if games_played.get(opp, 0) >= TIER_MIN_GAMES:
+            by_group.setdefault(group, []).append((pts, opp))
+    tiers = {}
+    for group, rows in by_group.items():
+        rows.sort()
+        for i, (_, opp) in enumerate(rows):
+            tiers[(opp, group)] = ("hard", "ok", "easy")[i * 3 // len(rows)]
+    return tiers
+
+
 # ---- K: the corrections ----------------------------------------------------
 
 def role_factor(usage_adj, params):

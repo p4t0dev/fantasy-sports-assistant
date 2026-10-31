@@ -18,13 +18,13 @@ export function WeekFixes({ fixes, week }: { fixes?: WaiverMove[]; week?: number
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-[10px] font-bold text-green-400">ADD</span>
             <PosBadge pos={f.add.pos} />
-            <span className="text-white">{f.add.name}</span>
-            <span className="text-[10px] text-gray-500">{f.add.team}</span>
+            <span className="text-ink">{f.add.name}</span>
+            <span className="text-[10px] text-muted">{f.add.team}</span>
             {f.add.pts_week != null && (
-              <span className="text-gray-400">{f.add.pts_week.toFixed(1)}</span>
+              <span className="text-muted">{f.add.pts_week.toFixed(1)}</span>
             )}
             {f.out && (
-              <span className="text-gray-500">
+              <span className="text-muted">
                 → Startelf für {f.out.name}
                 {f.slot ? ` (${slotLabel(f.slot)})` : ""}
               </span>
@@ -36,15 +36,15 @@ export function WeekFixes({ fixes, week }: { fixes?: WaiverMove[]; week?: number
             {f.drop ? (
               <>
                 <PosBadge pos={f.drop.pos} />
-                <span className="text-gray-400">{f.drop.name}</span>
+                <span className="text-muted">{f.drop.name}</span>
                 <InjuryBadge injury={f.drop.injury} />
               </>
             ) : (
-              <span className="text-gray-400">keiner nötig, aktiver Platz frei</span>
+              <span className="text-muted">keiner nötig, aktiver Platz frei</span>
             )}
           </div>
-          <details className="text-[11px] text-gray-400">
-            <summary className="cursor-pointer list-none select-none hover:text-gray-200">▸ Warum?</summary>
+          <details className="text-[11px] text-muted">
+            <summary className="cursor-pointer list-none select-none hover:text-ink">▸ Warum?</summary>
             <p className="mt-1">{f.reason}</p>
           </details>
         </div>

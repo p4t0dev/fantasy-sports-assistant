@@ -30,15 +30,15 @@ export function SortBar<T>({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-xs text-gray-500 mr-1">{label}</span>
+      <span className="text-xs text-muted mr-1">{label}</span>
       {options.map((option) => (
         <button
           key={option.id}
           onClick={() => onPick(option.id)}
           className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors ${
             active === option.id
-              ? "bg-blue-600 text-white border-blue-500"
-              : "bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
+              ? "bg-ink text-canvas border-ink"
+              : "bg-surface text-muted border-line hover:text-ink"
           }`}
         >
           {option.label}
@@ -82,7 +82,7 @@ export function PosFilter({
       <button
         onClick={() => onPick(null)}
         className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors ${
-          active === null ? tone : "bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
+          active === null ? tone : "bg-surface text-muted border-line hover:text-ink"
         }`}
       >
         Alle

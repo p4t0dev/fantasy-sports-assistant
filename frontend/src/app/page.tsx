@@ -149,28 +149,28 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-8">
-      <div className="text-center py-12 px-4 sm:px-6 lg:px-8">
-        <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white mb-4">
-          Dominate Your <span className="text-blue-500">Dynasty</span>
+      <div className="text-center py-6 sm:py-12 px-4 sm:px-6 lg:px-8">
+        <h1 className="text-5xl sm:text-6xl font-extrabold text-ink mb-4">
+          Dominate Your Dynasty
         </h1>
-        <p className="max-w-2xl mx-auto text-xl text-gray-400">
+        <p className="max-w-2xl mx-auto text-xl text-muted">
           Waiver-Empfehlungen mit Live-Spielernews, Verletzungsstatus und FAAB-Geboten — plus
           Draft-Analyse auf Basis mehrjähriger Daten.
         </p>
       </div>
 
-      <div className="glass-panel p-6 sm:p-8 max-w-xl mx-auto">
+      <div className="panel p-6 sm:p-8 max-w-xl mx-auto">
         <form onSubmit={fetchLeagues} className="space-y-4">
           <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-300">
+            <label htmlFor="username" className="block text-sm font-medium text-ink-soft">
               Sleeper Username
             </label>
-            <div className="mt-1 flex flex-col sm:flex-row gap-2 rounded-md shadow-sm">
+            <div className="mt-1 flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
                 name="username"
                 id="username"
-                className="flex-1 min-w-0 block w-full px-3 py-2 rounded-md bg-gray-900 border border-gray-700 text-white placeholder-gray-500 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                className="flex-1 min-w-0 block w-full px-3 py-2 rounded-md bg-surface border border-line text-ink placeholder-muted focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                 placeholder="e.g. patrickschmidt"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -178,7 +178,7 @@ export default function Dashboard() {
               <select
                 value={season}
                 onChange={(e) => setSeason(e.target.value)}
-                className="px-3 py-2 rounded-md bg-gray-900 border border-gray-700 text-white text-sm focus:ring-blue-500 focus:border-blue-500 cursor-pointer"
+                className="px-3 py-2 rounded-md bg-surface border border-line text-ink text-sm focus:ring-blue-500 focus:border-blue-500 cursor-pointer"
               >
                 <option value="all">Alle Saisons</option>
                 <option value="2026">2026</option>
@@ -188,7 +188,7 @@ export default function Dashboard() {
               <button
                 type="submit"
                 disabled={loading || !username}
-                className="inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 btn"
+                className="inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md text-sm font-medium text-canvas bg-ink hover:opacity-85 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
               >
                 {loading ? "Lädt…" : "Ligen laden"}
               </button>
@@ -196,8 +196,8 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-400">Sportart:</span>
-            <div className="bg-gray-900 rounded-lg p-1 flex border border-gray-800">
+            <span className="text-sm text-muted">Sportart:</span>
+            <div className="bg-surface rounded-lg p-1 flex border border-line">
               {SPORTS.map((s) => (
                 <button
                   key={s.id}
@@ -208,7 +208,7 @@ export default function Dashboard() {
                     setExtraLeagues([]);
                   }}
                   className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    sport === s.id ? "bg-blue-600 text-white shadow" : "text-gray-400 hover:text-white"
+                    sport === s.id ? "bg-ink text-canvas" : "text-muted hover:text-ink"
                   }`}
                 >
                   {s.label}
@@ -220,11 +220,11 @@ export default function Dashboard() {
           {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
         </form>
 
-        <div className="mt-6 pt-6 border-t border-gray-800">
+        <div className="mt-6 pt-6 border-t border-line">
           <form onSubmit={addManualLeague} className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
-              className="flex-1 px-3 py-1.5 rounded-md bg-gray-900 border border-gray-700 text-white text-xs placeholder-gray-500"
+              className="flex-1 px-3 py-1.5 rounded-md bg-surface border border-line text-ink text-xs placeholder-muted"
               placeholder="Liga ID direkt eingeben (z. B. 1318881290115633152)"
               value={manualId}
               onChange={(e) => setManualId(e.target.value)}
@@ -232,7 +232,7 @@ export default function Dashboard() {
             <button
               type="submit"
               disabled={manualLoading || !manualId.trim()}
-              className="px-3 py-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium border border-gray-700 disabled:opacity-50"
+              className="px-3 py-1.5 rounded-md bg-raised hover:bg-raised-2 text-ink text-xs font-medium border border-line disabled:opacity-50"
             >
               {manualLoading ? "Lade…" : "+ Liga ID hinzufügen"}
             </button>
@@ -242,22 +242,22 @@ export default function Dashboard() {
 
       {overview && (
         <div
-          className={`glass-panel max-w-xl mx-auto p-4 flex items-center gap-4 border-l-4 ${
+          className={`panel max-w-xl mx-auto p-4 flex items-center gap-4 border-l-4 ${
             urgentCount ? "border-l-red-500 bg-red-900/10" : "border-l-green-500 bg-green-900/10"
           }`}
         >
           <div className="text-2xl">{urgentCount ? "⚠" : "✓"}</div>
           <div className="flex-1 text-sm space-y-0.5">
-            <div className="text-white font-bold">
+            <div className="text-ink font-bold">
               Wochenübersicht{overview.week ? ` · Woche ${overview.week}` : ""}
             </div>
-            <div className="text-gray-400">
+            <div className="text-muted">
               {urgentCount
                 ? `${urgentCount} ${urgentCount === 1 ? "Aufstellung braucht" : "Aufstellungen brauchen"} Aufmerksamkeit`
                 : "Alle Aufstellungen in Ordnung"}
               {hintCount > 0 && ` · ${hintCount} mit Hinweisen`}
             </div>
-            <div className="text-gray-400">
+            <div className="text-muted">
               {waiverSummary}
             </div>
           </div>
@@ -276,7 +276,7 @@ export default function Dashboard() {
       )}
 
       {!loading && leagues.length === 0 && drafts.length === 0 && (
-        <p className="text-center text-gray-500 text-sm">
+        <p className="text-center text-muted text-sm">
           Noch keine Ligen geladen. Username eingeben, Sportart wählen und „Ligen laden“ drücken.
         </p>
       )}
@@ -284,18 +284,18 @@ export default function Dashboard() {
       {(leagues.length > 0 || drafts.length > 0) && (
         <div className="space-y-6">
           <div className="flex flex-wrap items-baseline gap-3">
-            <h2 className="text-2xl font-bold text-white">
-              Deine Ligen &amp; Drafts <span className="text-gray-500 text-lg">({sport.toUpperCase()})</span>
+            <h2 className="text-2xl font-bold text-ink">
+              Deine Ligen &amp; Drafts <span className="text-muted text-lg">({sport.toUpperCase()})</span>
             </h2>
             {cachedAt && (
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-muted">
                 zwischengespeichert {ageLabel(cachedAt)} · „Ligen laden“ holt neu
               </span>
             )}
             {archivedCount > 0 && (
               <button
                 onClick={() => setShowArchive((v) => !v)}
-                className="ml-auto px-3 py-1 rounded-md text-xs font-semibold border bg-gray-900 text-gray-400 border-gray-700 hover:text-white"
+                className="ml-auto px-3 py-1 rounded-md text-xs font-semibold border bg-surface text-muted border-line hover:text-ink"
               >
                 {showArchive
                   ? `Archiv ausblenden (${archivedCount})`
@@ -310,18 +310,18 @@ export default function Dashboard() {
               return (
                 <div
                   key={league.league_id}
-                  className={`glass-panel overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] flex flex-col h-full ${
+                  className={`panel overflow-hidden transition-all hover:border-blue-500/50 flex flex-col h-full ${
                     league.archived ? "opacity-60" : ""
                   }`}
                 >
                   <div className="px-6 py-5 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-lg leading-6 font-medium text-white truncate" title={league.name}>
+                      <h3 className="text-lg leading-6 font-medium text-ink truncate" title={league.name}>
                         {league.name}
                       </h3>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {league.archived && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-gray-800 text-gray-400 border border-gray-700">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-raised text-muted border border-line">
                             Archiv
                           </span>
                         )}
@@ -330,7 +330,7 @@ export default function Dashboard() {
                         </span>
                       </div>
                     </div>
-                    <div className="mt-4 flex items-center justify-between text-sm text-gray-400">
+                    <div className="mt-4 flex items-center justify-between text-sm text-muted">
                       <p>Saison: {league.season}</p>
                       <p>
                         Status: <span className="capitalize">{league.status}</span>
@@ -349,7 +349,7 @@ export default function Dashboard() {
                       </Link>
                     )}
                   </div>
-                  <div className="bg-gray-900/50 px-6 py-3 border-t border-gray-800 flex flex-wrap gap-4 justify-between items-center">
+                  <div className="bg-surface/50 px-6 py-3 border-t border-line flex flex-wrap gap-4 justify-between items-center">
                     <Link
                       href={`/waivers?${linkParams({ league_id: league.league_id })}`}
                       className="text-blue-400 hover:text-blue-300 text-sm font-medium"
@@ -366,7 +366,7 @@ export default function Dashboard() {
                       <Link
                         key={d.draft_id}
                         href={`/draft?${linkParams({ draft_id: d.draft_id })}`}
-                        className="text-green-400 hover:text-green-300 text-sm font-medium w-full text-center mt-2 pt-2 border-t border-gray-800"
+                        className="text-green-400 hover:text-green-300 text-sm font-medium w-full text-center mt-2 pt-2 border-t border-line"
                       >
                         Draft Assistant ({d.status}) →
                       </Link>
@@ -382,24 +382,24 @@ export default function Dashboard() {
               .map((draft) => (
                 <div
                   key={draft.draft_id}
-                  className="glass-panel overflow-hidden transition-all border-green-500/30 hover:border-green-500/60 hover:shadow-[0_0_15px_rgba(34,197,94,0.2)] flex flex-col h-full"
+                  className="panel overflow-hidden transition-all border-green-500/30 hover:border-green-500/60 flex flex-col h-full"
                 >
                   <div className="px-6 py-5 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-lg leading-6 font-medium text-white truncate" title={draft.name}>
+                      <h3 className="text-lg leading-6 font-medium text-ink truncate" title={draft.name}>
                         {draft.name}
                       </h3>
                       <span className="shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-900/50 text-green-300 border border-green-800">
                         Mock Draft
                       </span>
                     </div>
-                    <div className="mt-4 flex items-center justify-between text-sm text-gray-400">
+                    <div className="mt-4 flex items-center justify-between text-sm text-muted">
                       <p>
                         Status: <span className="capitalize">{draft.status}</span>
                       </p>
                     </div>
                   </div>
-                  <div className="bg-gray-900/50 px-6 py-3 border-t border-gray-800 flex justify-end">
+                  <div className="bg-surface/50 px-6 py-3 border-t border-line flex justify-end">
                     <Link
                       href={`/draft?${linkParams({ draft_id: draft.draft_id })}`}
                       className="text-green-400 hover:text-green-300 text-sm font-medium w-full text-center"

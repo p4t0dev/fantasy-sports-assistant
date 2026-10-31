@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import type { ForecastModel, ForecastParams, NbaModel } from "@/lib/types";
 import { PosBadge } from "@/components/PlayerBadges";
@@ -27,9 +26,9 @@ function pct(x: number) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="glass-panel p-5 space-y-3">
-      <h2 className="text-lg font-bold text-white">{title}</h2>
-      <div className="text-sm text-gray-300 leading-relaxed space-y-3">{children}</div>
+    <section className="panel p-5 space-y-3">
+      <h2 className="text-lg font-bold text-ink">{title}</h2>
+      <div className="text-sm text-ink-soft leading-relaxed space-y-3">{children}</div>
     </section>
   );
 }
@@ -44,7 +43,7 @@ function NbaSection({ nba }: { nba: NbaModel }) {
   return (
     <Section title="NBA: ein Spiel pro Woche (Lock-In)">
       <p>
-        Sleeper-NBA-Ligen laufen im <strong className="text-white">Lock-In-Modus</strong>: Eine
+        Sleeper-NBA-Ligen laufen im <strong className="text-ink">Lock-In-Modus</strong>: Eine
         Woche geht von Montag bis Sonntag, und jeder Starter zählt mit genau einem seiner Spiele.
         Nach einem Spiel kann man es einlocken, bis sein nächstes beginnt. Wer nie eingelockt
         wird, zählt mit dem letzten Spiel der Woche, auch wenn das 0 ist. Eine Woche ist deshalb
@@ -82,7 +81,7 @@ Einlocken, wenn Punkte im Spiel i ≥ V_i+1  (was der Rest der Woche wert ist)`}
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="text-gray-500">
+              <thead className="text-muted">
                 <tr>
                   <th className="text-left font-medium py-1">Spiele in der Woche</th>
                   <th className="text-right font-medium">Prognose</th>
@@ -92,17 +91,17 @@ Einlocken, wenn Punkte im Spiel i ≥ V_i+1  (was der Rest der Woche wert ist)`}
               </thead>
               <tbody>
                 {Object.entries(bt.week.by_games).map(([n, r]) => (
-                  <tr key={n} className="border-t border-gray-800">
+                  <tr key={n} className="border-t border-line">
                     <td className="py-1">{n === "4" ? "4+" : n}</td>
-                    <td className="text-right text-white">{r.value}</td>
+                    <td className="text-right text-ink">{r.value}</td>
                     <td className="text-right">{r.locked}</td>
-                    <td className="text-right text-gray-500">{r.no_lock}</td>
+                    <td className="text-right text-muted">{r.no_lock}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-muted">
             Starter mit mindestens 15 Punkten pro Spiel in der Testhälfte. &bdquo;Real eingelockt&ldquo;
             ist, was die Einlock-Regel mit den echten Ergebnissen geholt hätte.
           </p>
@@ -114,7 +113,7 @@ Einlocken, wenn Punkte im Spiel i ≥ V_i+1  (was der Rest der Woche wert ist)`}
         Sleeper nicht. Knappe Entscheidungen sind in der NBA unter {nba.thresholds.close_call}{" "}
         Punkten, Favorit oder Außenseiter ab {nba.thresholds.favorite} Punkten Abstand.
       </p>
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-muted">
         Neu fitten: <code className="text-blue-300">python3 tools/backtest_nba.py --season 2025 --write</code>
       </p>
     </Section>
@@ -123,7 +122,7 @@ Einlocken, wenn Punkte im Spiel i ≥ V_i+1  (was der Rest der Woche wert ist)`}
 
 function Formula({ children }: { children: React.ReactNode }) {
   return (
-    <pre className="overflow-x-auto rounded-md border border-gray-800 bg-gray-900/70 p-3 text-[13px] text-blue-200">
+    <pre className="overflow-x-auto rounded-md border border-line bg-surface/70 p-3 text-[13px] text-blue-200">
       {children}
     </pre>
   );
@@ -151,19 +150,13 @@ export default function ForecastModelPage() {
     <div className="space-y-6 max-w-4xl">
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-white">So entsteht die Prognose</h1>
-          <p className="text-gray-400 mt-1">
+          <h1 className="text-3xl font-bold text-ink">So entsteht die Prognose</h1>
+          <p className="text-muted mt-1">
             Jede Wochenzahl in der App — Aufstellung, Wochenübersicht — kommt aus
             dieser einen Formel. Unter jedem Spieler lässt sich aufklappen, wie
             seine Zahl zustande kommt.
           </p>
         </div>
-        <Link
-          href="/"
-          className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors text-sm font-medium shrink-0"
-        >
-          ← Zurück
-        </Link>
       </div>
 
       <Section title="Die Formel">
@@ -173,11 +166,11 @@ Basis     B = g_S · S  +  g_F · F  +  g_Q · Q        (g_S + g_F + g_Q = 1)
 Korrektur K = R × M × W                               begrenzt auf [${limits?.k_min ?? 0.75}, ${limits?.k_max ?? 1.25}]
 A         = Verfügbarkeit`}</Formula>
         <p>
-          <strong className="text-white">Erst die Basis:</strong> drei Schätzungen
+          <strong className="text-ink">Erst die Basis:</strong> drei Schätzungen
           derselben Frage — wie viele Punkte macht er in einem Spiel? — werden
-          gewichtet gemittelt. <strong className="text-white">Dann die
+          gewichtet gemittelt. <strong className="text-ink">Dann die
           Korrekturen:</strong> was die Basis nicht oder zu schwach berücksichtigt,
-          jede einzeln gedeckelt. <strong className="text-white">Zuletzt die
+          jede einzeln gedeckelt. <strong className="text-ink">Zuletzt die
           Verfügbarkeit.</strong>
         </p>
         <p>
@@ -191,18 +184,18 @@ A         = Verfügbarkeit`}</Formula>
       <Section title="Die Bausteine">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="text-gray-500 uppercase tracking-wider">
+            <thead className="text-muted uppercase tracking-wider">
               <tr>
                 <th className="py-2 pr-3">Faktor</th>
                 <th className="py-2 pr-3">Was er misst</th>
                 <th className="py-2">Quelle</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800 align-top">
+            <tbody className="divide-y divide-line align-top">
               <tr>
                 <td className="py-2 pr-3 text-blue-300 font-bold">S · Sleeper</td>
                 <td className="py-2 pr-3">Sleepers Prognose für diese Woche, im Scoring deiner Liga</td>
-                <td className="py-2 text-gray-400">Sleeper, 3× täglich</td>
+                <td className="py-2 text-muted">Sleeper, 3× täglich</td>
               </tr>
               <tr>
                 <td className="py-2 pr-3 text-emerald-300 font-bold">F · Form</td>
@@ -212,7 +205,7 @@ A         = Verfügbarkeit`}</Formula>
                   <em>Nutzung</em> erwarten ließ (xFP, siehe unten). Gewicht wächst mit jedem
                   Spiel: <code className="text-blue-300">g_F = min(cap, n / (n + k))</code>
                 </td>
-                <td className="py-2 text-gray-400">Box-Scores der gespielten Wochen</td>
+                <td className="py-2 text-muted">Box-Scores der gespielten Wochen</td>
               </tr>
               <tr>
                 <td className="py-2 pr-3 text-purple-300 font-bold">Q · Qualität</td>
@@ -220,19 +213,19 @@ A         = Verfügbarkeit`}</Formula>
                   Generelle Klasse: Saisonprognose pro Spiel, gemischt mit dem Schnitt der
                   Vorsaison (je mehr Spiele dahinter, desto mehr Gewicht, max. 50 %)
                 </td>
-                <td className="py-2 text-gray-400">Sleeper Saisonprognose + Stats Vorjahr</td>
+                <td className="py-2 text-muted">Sleeper Saisonprognose + Stats Vorjahr</td>
               </tr>
               <tr>
-                <td className="py-2 pr-3 text-white font-bold">R · Rolle</td>
+                <td className="py-2 pr-3 text-ink font-bold">R · Rolle</td>
                 <td className="py-2 pr-3">
                   Situation im Team: Snap-Anteil-Trend, Rang in der Positionsgruppe
                   (&bdquo;WR3 → WR2&ldquo;), Vertretung vs. echter Aufstieg. Max. ±
                   {pct(limits?.role_max ?? 0.15)}
                 </td>
-                <td className="py-2 text-gray-400">Box-Scores (Snaps, Targets, Touches)</td>
+                <td className="py-2 text-muted">Box-Scores (Snaps, Targets, Touches)</td>
               </tr>
               <tr>
-                <td className="py-2 pr-3 text-white font-bold">M · Matchup</td>
+                <td className="py-2 pr-3 text-ink font-bold">M · Matchup</td>
                 <td className="py-2 pr-3">
                   Punkte, die der Gegner dieser Position im Schnitt erlaubt, gegen den
                   Ligaschnitt — früh in der Saison zum Schnitt gezogen (Gewicht{" "}
@@ -242,28 +235,28 @@ A         = Verfügbarkeit`}</Formula>
                   ). Dazu die Vegas-Erwartung für sein Team (Implied Team Total, Gewicht{" "}
                   {limits?.vegas_weight ?? 0.3}). Max. ±{pct(limits?.matchup_max ?? 0.1)}
                 </td>
-                <td className="py-2 text-gray-400">Box-Scores, The Odds API</td>
+                <td className="py-2 text-muted">Box-Scores, The Odds API</td>
               </tr>
               <tr>
-                <td className="py-2 pr-3 text-white font-bold">W · Wetter</td>
+                <td className="py-2 pr-3 text-ink font-bold">W · Wetter</td>
                 <td className="py-2 pr-3">
                   Mittlerer Wind und stärkster Regen/Schnee im Spielfenster am Stadion.
                   Unter einem Dach (auch schließbar) immer 1.0. Regeln siehe unten
                 </td>
-                <td className="py-2 text-gray-400">Open-Meteo</td>
+                <td className="py-2 text-muted">Open-Meteo</td>
               </tr>
               <tr>
-                <td className="py-2 pr-3 text-white font-bold">A · Verfügbarkeit</td>
+                <td className="py-2 pr-3 text-ink font-bold">A · Verfügbarkeit</td>
                 <td className="py-2 pr-3">
                   Out/IR = 0, Doubtful abgeschlagen. Questionable ohne Abschlag, aber
                   markiert: vor Kickoff die Inactives prüfen
                 </td>
-                <td className="py-2 text-gray-400">Sleeper Verletzungsstatus</td>
+                <td className="py-2 text-muted">Sleeper Verletzungsstatus</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted">
           Fehlt Sleepers Wochenprognose für einen gesunden Spieler, dessen Team
           spielt (z. B. sonntags die Defense eines Montagsteams), rechnet die Basis
           aus Form (bis {pct(model?.form_without_s ?? 0.7)}) und Qualität — statt
@@ -283,13 +276,13 @@ A         = Verfügbarkeit`}</Formula>
           Punkte auseinander sieht — wie oft liegt der Richtige vorn?</em>
         </p>
         <p>
-          <strong className="text-white">Regel:</strong> Schlägt das Modell Sleeper
+          <strong className="text-ink">Regel:</strong> Schlägt das Modell Sleeper
           auf den Prüfwochen nicht, gilt für diese Position Sleeper allein.
         </p>
         {error && <p className="text-red-400 text-xs">Modell nicht geladen: {error}</p>}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="text-gray-500 uppercase tracking-wider">
+            <thead className="text-muted uppercase tracking-wider">
               <tr>
                 <th className="py-2 pr-3">Pos</th>
                 <th className="py-2 pr-3">Basis nach 2 / 4 / 8 Spielen (S · F · Q)</th>
@@ -300,7 +293,7 @@ A         = Verfügbarkeit`}</Formula>
                 <th className="py-2">Ergebnis</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800">
+            <tbody className="divide-y divide-line">
               {groups.map((g) => {
                 const p = model!.params[g];
                 const r = results[g];
@@ -309,12 +302,12 @@ A         = Verfügbarkeit`}</Formula>
                     <td className="py-2 pr-3">
                       <PosBadge pos={g === "IDP" ? "LB" : g} /> <span className="ml-1">{GROUP_LABEL[g] ?? g}</span>
                     </td>
-                    <td className="py-2 pr-3 text-gray-300">
+                    <td className="py-2 pr-3 text-ink-soft">
                       {[2, 4, 8].map((n) => {
                         const w = weightsAt(n, p);
                         return (
                           <div key={n}>
-                            <span className="text-gray-500">{n} Sp.:</span>{" "}
+                            <span className="text-muted">{n} Sp.:</span>{" "}
                             <span className="text-blue-300">{pct(w.S)}</span> ·{" "}
                             <span className="text-emerald-300">{pct(w.F)}</span> ·{" "}
                             <span className="text-purple-300">{pct(w.Q)}</span>
@@ -328,8 +321,8 @@ A         = Verfügbarkeit`}</Formula>
                     <td className="py-2 pr-3">
                       {r ? (
                         <>
-                          {pct(r.sleeper.pairs)} → <span className="text-white">{pct(r.model.pairs)}</span>
-                          <div className="text-gray-500">
+                          {pct(r.sleeper.pairs)} → <span className="text-ink">{pct(r.model.pairs)}</span>
+                          <div className="text-muted">
                             Fehler {r.sleeper.mae} → {r.model.mae} Pkt · {r.pairs} Paare
                           </div>
                         </>
@@ -337,7 +330,7 @@ A         = Verfügbarkeit`}</Formula>
                         "—"
                       )}
                     </td>
-                    <td className={`py-2 ${r?.verdict === "Modell" ? "text-emerald-300" : "text-gray-400"}`}>
+                    <td className={`py-2 ${r?.verdict === "Modell" ? "text-emerald-300" : "text-muted"}`}>
                       {r?.verdict ?? "Startwerte"}
                     </td>
                   </tr>
@@ -346,7 +339,7 @@ A         = Verfügbarkeit`}</Formula>
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted">
           Lesehilfe: 50 % richtige Entscheidungen wäre Münzwurf. Knappe Duelle sind
           schwer — Sleeper liegt bei rund 56–61 %. Ein Prozentpunkt mehr heißt: von
           100 knappen Entscheidungen eine mehr richtig. Rolle β = 0 heißt, der
@@ -396,12 +389,12 @@ A         = Verfügbarkeit`}</Formula>
             Spieler mit <em>Potenzial</em>. Nur eine starke Woche dreht das Duell.
           </li>
           <li>
-            <strong className="text-white">Chopped</strong>: immer den sicheren — es zählt nur,
+            <strong className="text-ink">Chopped</strong>: immer den sicheren — es zählt nur,
             nicht Letzter zu werden.
           </li>
           <li>Dazwischen bleibt es ein Münzwurf.</li>
         </ul>
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-muted">
           „Sicher“ heißt kleine Streuung: wie weit eine Woche von der Prognose abweicht (±1
           Standardabweichung). Startwert je Position aus dem Backtest, danach die eigene
           Streuung des Spielers, die mit jedem Spiel mehr zählt:{" "}
@@ -419,10 +412,10 @@ A         = Verfügbarkeit`}</Formula>
           Wochen (Bye = 0). Was ein Zugang wert ist, hängt aber vom Format ab:
         </p>
         <ul className="list-disc list-inside space-y-1">
-          <li><strong className="text-white">Dynasty</strong>: Punkte plus Dynasty-Wert; Kadertiefe nach Dynasty-Wert; junge Spieler mit Draft-Kapital werden nie gedroppt.</li>
-          <li><strong className="text-white">Keeper</strong>: wie Dynasty, der Dynasty-Wert zählt halb.</li>
-          <li><strong className="text-white">Redraft</strong>: nur Punkte; Kadertiefe in Punkten pro Woche.</li>
-          <li><strong className="text-white">Chopped</strong>: nur Punkte, diese Woche zählt dreifach (3·2·1·1·1) — wer Letzter wird, fliegt.</li>
+          <li><strong className="text-ink">Dynasty</strong>: Punkte plus Dynasty-Wert; Kadertiefe nach Dynasty-Wert; junge Spieler mit Draft-Kapital werden nie gedroppt.</li>
+          <li><strong className="text-ink">Keeper</strong>: wie Dynasty, der Dynasty-Wert zählt halb.</li>
+          <li><strong className="text-ink">Redraft</strong>: nur Punkte; Kadertiefe in Punkten pro Woche.</li>
+          <li><strong className="text-ink">Chopped</strong>: nur Punkte, diese Woche zählt dreifach (3·2·1·1·1) — wer Letzter wird, fliegt.</li>
         </ul>
       </Section>
 
@@ -436,7 +429,7 @@ A         = Verfügbarkeit`}</Formula>
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="text-gray-500 uppercase tracking-wider">
+            <thead className="text-muted uppercase tracking-wider">
               <tr>
                 <th className="py-2 pr-3">Pos</th>
                 <th className="py-2 pr-3">Starker Wind</th>
@@ -444,7 +437,7 @@ A         = Verfügbarkeit`}</Formula>
                 <th className="py-2">Regen / Schnee</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800">
+            <tbody className="divide-y divide-line">
               {Object.entries(model?.weather.effect ?? {}).map(([pos, [strong, severe, rain]]) => (
                 <tr key={pos}>
                   <td className="py-1.5 pr-3"><PosBadge pos={pos} /></td>
@@ -464,7 +457,7 @@ A         = Verfügbarkeit`}</Formula>
         <ol className="list-decimal list-inside space-y-1.5">
           <li>Jeder Spieler deines Kaders bekommt seine Prognose P.</li>
           <li>
-            Die Aufstellung wird so besetzt, dass die <strong className="text-white">Summe
+            Die Aufstellung wird so besetzt, dass die <strong className="text-ink">Summe
             aller P maximal</strong> ist — über alle Slots gleichzeitig, inklusive FLEX und
             SUPERFLEX. Das Ergebnis ist mathematisch optimal.
           </li>
@@ -489,19 +482,19 @@ A         = Verfügbarkeit`}</Formula>
       <Section title="Was (noch) nicht drin ist">
         <ul className="list-disc list-inside space-y-1">
           <li>
-            <strong className="text-white">Trainingsbeteiligung</strong> — Sleeper liefert
+            <strong className="text-ink">Trainingsbeteiligung</strong> — Sleeper liefert
             sie praktisch nie (1 von 12.000 Spielern).
           </li>
           <li>
-            <strong className="text-white">Game Script aus dem Spread</strong> — nur indirekt
+            <strong className="text-ink">Game Script aus dem Spread</strong> — nur indirekt
             über das Implied Team Total.
           </li>
           <li>
-            <strong className="text-white">Schon gespielte Spiele der laufenden Woche</strong>{" "}
+            <strong className="text-ink">Schon gespielte Spiele der laufenden Woche</strong>{" "}
             zählen im Matchup-Vergleich mit ihrer Prognose, nicht mit den echten Punkten.
           </li>
         </ul>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted">
           Neu fitten: <code className="text-blue-300">python3 tools/backtest_forecast.py
           --league_id &lt;ID&gt; --fit --out functions/data/forecast_params.json</code>
         </p>
