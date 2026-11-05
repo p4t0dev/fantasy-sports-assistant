@@ -266,6 +266,14 @@ Einlocken bringt pro Starter und Woche rund 7 Punkte gegenüber gar keinem.
   restlichen Spiele der Woche, und so rechnen Optimierer, Bank-Hinweis und
   Matchup (auch für die Bank des Gegners). Ob er im Spiel startete, verrät
   die API nicht; es gilt, wo er jetzt steht.
+- **Eingelockt:** wer schon eingelockt ist, verrät die API nicht. Die
+  Matchup-Punkte (`starters_points`) sehen danach aus, sind es aber nicht:
+  sie hielten ein nie eingelocktes Spiel fest und verloren ein eingelocktes
+  binnen einer Stunde. Deshalb markierst du den Lock in der Aufstellung
+  („Eingelockt?“, Endpunkt `set_lock`), gespeichert pro Liga und Woche in
+  `locks_nba_<league_id>.json`. Ein markierter Spieler zählt mit diesem
+  Spiel, bleibt auf seinem Platz und bekommt keinen Lock-Hinweis mehr; die
+  gespeicherte Wochenübersicht rechnet die Liga sofort neu.
 - **Ausfälle:** ohne Meldung das gemessene Ausfallrisiko, sonst für das
   nächste Spiel Questionable 35 %, Doubtful 75 %, Out 100 % (die übrigen
   Spiele nach einem Out 50 %); IR und Sperren für die ganze Woche.

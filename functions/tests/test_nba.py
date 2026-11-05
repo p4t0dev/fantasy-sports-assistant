@@ -223,35 +223,28 @@ class WeekFieldsTest(unittest.TestCase):
         self.assertEqual(result["changes"], [])
         self.assertEqual(result["total"], 17.0)
 
-    def counted_week(self, counted):
-        # Two games played, 44 and 2, one still to come: what Sleeper's
-        # matchup counts for him tells whether the 44 was locked.
+    def marked_week(self, lock_date):
+        # Two games played, 44 and 2, one still to come.
         weekly = self.weekly("2026-10-28", {"1": [("2026-10-26", 44.0), ("2026-10-27", 2.0)]})
         weekly["games"][2]["1"] = [("2026-10-28", "DET", 4.0)]
         return api_core._nba_week_fields("1", {"team": "BOS"}, None, weekly,
-                                         starting=True, counted=counted)
+                                         starting=True, lock_date=lock_date)
 
-    def test_an_earlier_lock_shows_in_the_matchup_points(self):
-        f = self.counted_week(44.0)
+    def test_a_marked_lock_holds_his_score(self):
+        f = self.marked_week("2026-10-26")
         self.assertTrue(f["locked"])
         self.assertIsNone(f["lock"])
         self.assertEqual(f["pts_week"], 44.0)
+        self.assertEqual(f["locked_game"], {"date": "2026-10-26", "score": 44.0})
         self.assertIn("Eingelockt am 26.10.", " ".join(f["forecast"]["explain"]))
 
-    def test_the_last_game_counting_keeps_the_call(self):
-        for counted in (2.0, None, 17.0):
-            f = self.counted_week(counted)
+    def test_without_a_mark_the_call_stands(self):
+        for lock_date in (None, "2026-10-20"):
+            f = self.marked_week(lock_date)
             self.assertFalse(f["locked"])
+            self.assertIsNone(f["locked_game"])
             self.assertEqual(f["lock"]["score"], 2.0)
-
-    def test_games_that_did_not_count_cannot_be_locked(self):
-        # Sleeper counts 0: he did not start the 45, so it cannot be locked.
-        f = api_core._nba_week_fields("1", {"team": "BOS"}, None,
-                                      self.weekly("2026-10-27", {"1": [("2026-10-26", 45.0)]}),
-                                      starting=True, counted=0.0)
-        self.assertIsNone(f["lock"])
-        self.assertFalse(f["locked"])
-        self.assertEqual(f["pts_week"], 30.0)
+            self.assertEqual([g["score"] for g in f["played_week"]], [44.0, 2.0])
 
     def test_a_locked_starter_is_never_swapped_out(self):
         weekly = self.weekly("2026-10-28", {"1": [("2026-10-26", 44.0), ("2026-10-27", 2.0)]})
@@ -262,14 +255,44 @@ class WeekFieldsTest(unittest.TestCase):
                             "fantasy_positions": ["PG"], "team": "BOS", "sport": "nba"}
                    for i, name in ((1, "Locked"), (2, "Bench"))}
         inputs = (players, {}, {}, {}, {}, weekly)
-        matchups = [{"roster_id": 7, "matchup_id": 1, "starters": ["1"],
-                     "starters_points": [44.0]}]
-        with mock.patch.object(api_core.sleeper_api, "get_matchups", return_value=matchups):
+        with mock.patch.object(api_core, "load_locks", return_value={"1": "2026-10-26"}):
             result = api_core._lineup_analysis(roster, ["PG", "BN"], inputs,
-                                               league={"league_id": "L"})
+                                               league={"league_id": "1"})
         self.assertEqual(result["changes"], [])
         self.assertEqual(result["lock_calls"], [])
         self.assertEqual(result["total"], 44.0)
+
+
+class LockStoreTest(unittest.TestCase):
+
+    def setUp(self):
+        self.files = {}
+        self.patches = [
+            mock.patch.object(api_core, "_read_fresh", side_effect=lambda f: self.files.get(f)),
+            mock.patch.object(api_core, "_write_data",
+                              side_effect=lambda f, d: self.files.__setitem__(f, d)),
+        ]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+
+    def test_marks_are_kept_per_week(self):
+        api_core.save_lock("123", 3, "4787", "2026-11-02")
+        api_core.save_lock("123", 3, "1913", "2026-11-02")
+        self.assertEqual(api_core.load_locks("123", 3), {"4787": "2026-11-02", "1913": "2026-11-02"})
+        api_core.save_lock("123", 3, "1913", None)
+        self.assertEqual(api_core.load_locks("123", 3), {"4787": "2026-11-02"})
+        # A new week starts empty.
+        self.assertEqual(api_core.load_locks("123", 4), {})
+        api_core.save_lock("123", 4, "2054", "2026-11-09")
+        self.assertEqual(api_core.load_locks("123", 4), {"2054": "2026-11-09"})
+
+    def test_league_id_is_checked(self):
+        self.assertIsNone(api_core.locks_file("../x"))
+        self.assertEqual(api_core.load_locks("../x", 3), {})
 
 
 class ScoringTest(unittest.TestCase):

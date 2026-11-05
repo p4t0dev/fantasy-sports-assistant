@@ -62,6 +62,10 @@ export type Player = {
   games_week?: number | null;
   /** NBA Lock-In: the call on the game he just played. */
   lock?: LockAdvice | null;
+  /** NBA Lock-In, starters: this week's games so far, the ones he can be marked locked on. */
+  played_week?: { date: string; score: number }[] | null;
+  /** NBA Lock-In: the game the manager marked as locked - his week's score. */
+  locked_game?: { date: string; score: number } | null;
   /** One sigma of his week around `pts_week`, where the sport sets it. */
   spread?: number | null;
   /** The season projection, where `pts` holds the pace instead (waivers). */

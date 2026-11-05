@@ -245,9 +245,68 @@ export function LockCalls({ calls }: { calls?: LockCall[] }) {
         Pro Startplatz zählt ein Spiel pro Woche. Ein eingelockter Platz ist für den Rest der Woche
         zu — abgewogen wird gegen alles, was der Platz offen noch bringen kann, auch Bankspieler mit
         späteren Spielen. Einlocken geht bis zum Beginn seines nächsten Spiels und nur aus der
-        Startelf — falls schon eingelockt, ignorieren.
+        Startelf. Schon eingelockt? Sleeper verrät das nicht — markiere es in der Aufstellung
+        unter „Eingelockt?“.
       </li>
     </ul>
+  );
+}
+
+/** "2026-11-02" → "02.11." */
+function dayMonth(date: string) {
+  return `${date.slice(8, 10)}.${date.slice(5, 7)}.`;
+}
+
+/** NBA Lock-In: mark which game a starter was locked on. Sleeper's API does
+ *  not say, so without this the app keeps calling locks and swaps for a
+ *  player whose week is already settled. */
+export function LockMarks({
+  players,
+  busy,
+  onMark,
+}: {
+  /** The starters as they sit now. */
+  players: Player[];
+  /** Player id whose mark is being saved. */
+  busy: string | null;
+  onMark: (player: Player, date: string | null) => void;
+}) {
+  const marks = players.filter((p) => p.played_week?.length);
+  if (!marks.length) return null;
+  return (
+    <div className="space-y-1.5">
+      <div className="eyebrow">Eingelockt?</div>
+      <ul className="space-y-1.5">
+        {marks.map((p) => (
+          <li key={p.id} className="flex items-center gap-2 flex-wrap text-sm">
+            <span className="text-ink font-semibold min-w-0 truncate mr-auto">{p.name}</span>
+            {p.played_week!.map((g) => {
+              const on = p.locked_game?.date === g.date;
+              return (
+                <button
+                  key={g.date}
+                  disabled={busy !== null}
+                  aria-pressed={on}
+                  onClick={() => onMark(p, on ? null : g.date)}
+                  title={on ? "Lock aufheben" : `Als eingelockt markieren: ${g.score} Pkt`}
+                  className={`min-h-9 px-2.5 border text-[13px] tabular-nums disabled:opacity-50 ${
+                    on ? "bg-ink text-canvas border-ink font-bold" : "border-line text-ink-soft"
+                  }`}
+                >
+                  {on && "🔒 "}
+                  {dayMonth(g.date)} · {g.score}
+                </button>
+              );
+            })}
+            {busy === p.id && <span className="text-xs text-muted">speichert…</span>}
+          </li>
+        ))}
+      </ul>
+      <p className="text-[10px] text-muted">
+        Tippe auf das Spiel, das du in Sleeper eingelockt hast — es zählt dann für die Woche, und
+        er bleibt, wo er ist. Nochmal tippen hebt die Markierung auf.
+      </p>
+    </div>
   );
 }
 

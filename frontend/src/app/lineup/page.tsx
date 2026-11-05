@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import type {
   Player,
   LineupSlot,
@@ -25,7 +25,7 @@ import {
   TIER_LEGEND,
   startPts,
 } from "@/components/PlayerBadges";
-import { CloseCalls, ForecastDetail, LockCalls, MatchupLine } from "@/components/ForecastDetail";
+import { CloseCalls, ForecastDetail, LockCalls, LockMarks, MatchupLine } from "@/components/ForecastDetail";
 import { useRememberLeague } from "@/lib/lastLeague";
 import { slotLabel } from "@/lib/positions";
 import { LineupSwap, PageHead, RefreshButton, ScoreBar, Spinner, TABLE } from "@/components/PageParts";
@@ -339,6 +339,8 @@ function LineupContent() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
+  const [marking, setMarking] = useState<string | null>(null);
+  const [markError, setMarkError] = useState("");
   const sections = useSections("lineup.sections", SECTION_IDS);
 
   useEffect(() => {
@@ -406,6 +408,24 @@ function LineupContent() {
       };
     });
   }, [data]);
+
+  const markLock = async (player: Player, date: string | null) => {
+    setMarking(player.id);
+    setMarkError("");
+    try {
+      const result = await apiPost<LineupData>("set_lock", {
+        username,
+        league_id: leagueId,
+        player_id: player.id,
+        date,
+      });
+      setData(result);
+    } catch (err) {
+      setMarkError(err instanceof Error ? err.message : "Speichern fehlgeschlagen");
+    } finally {
+      setMarking(null);
+    }
+  };
 
   if (!username || !leagueId) {
     return (
@@ -480,6 +500,14 @@ function LineupContent() {
         <div className="space-y-2 pt-1">
           <MatchupLine stance={data?.matchup} />
           <LockCalls calls={data?.lock_calls} />
+          {sport === "nba" && (
+            <LockMarks
+              players={(data?.current_slots ?? []).flatMap((s) => (s.player ? [s.player] : []))}
+              busy={marking}
+              onMark={markLock}
+            />
+          )}
+          {markError && <p className="text-xs text-red-400">{markError}</p>}
           <ActivationOptions options={data?.activations} />
           <CloseCalls calls={data?.close_calls} />
         </div>

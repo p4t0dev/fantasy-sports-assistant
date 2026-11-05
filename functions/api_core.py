@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import itertools
 import time
 import requests
@@ -2203,7 +2204,7 @@ def _forecast_week(pid, player, sig, weekly, proj, i, locked=False):
 
 
 def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None, starting=False,
-                 counted=None):
+                 lock_date=None):
     """This week's forecast and schedule for one player, or Nones off-season.
 
     `pts_week` is the forecast of functions/forecast.py - Sleeper's number,
@@ -2218,17 +2219,18 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None, star
 
     `starting` - whether he sits in a starting slot of his roster right now -
     only matters in the NBA, where only a starter's game can be locked, and
-    so does `counted`: what Sleeper's matchup says counts for him right now.
+    so does `lock_date`: the game the manager marked as locked.
     """
     if not weekly:
         return {"pts_week": None, "pts_week_base": None, "pts_horizon": None,
                 "pts_pace": None, "pace_weeks": None, "season_games": None,
                 "horizon": None, "opp": None, "opp_tier": None,
                 "bye": False, "bye_week": None, "locked": False, "usage": None,
-                "forecast": None, "games_week": None, "lock": None, "spread": None}
+                "forecast": None, "games_week": None, "lock": None, "spread": None,
+                "played_week": None, "locked_game": None}
     if weekly.get("sport") == "nba":
         return _nba_week_fields(str(pid), player, sig, weekly, horizon_weights, starting,
-                                counted)
+                                lock_date)
 
     pid = str(pid)
     weeks = weekly["weeks"]
@@ -2288,6 +2290,8 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None, star
         "games_week": None,
         "lock": None,
         "spread": None,
+        "played_week": None,
+        "locked_game": None,
     }
 
 
@@ -2309,7 +2313,7 @@ def _nba_week(rows, team, weekly, injury):
 
 
 def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=False,
-                     counted=None):
+                     lock_date=None):
     """`_week_fields` for the NBA: one game per starter and week (Lock-In).
 
     Each week is worth the optimal lock-in value over his games in it
@@ -2325,13 +2329,12 @@ def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=Fa
     matchup the same way. Whether he started that game the API does not say;
     where he sits now stands in for it.
 
-    Whether he was locked earlier the API does not say either, but `counted`
-    - Sleeper's points for him in this week's matchup - gives it away. It is
-    the score that counts right now: his last game unless he locked one. One
-    that matches an earlier game and not his last is a lock: his week is
-    over, and he cannot be moved. Zero after games he played means none of
-    them counted - he did not start them - so there is nothing to lock.
-    Anything else (a game under way) leaves the call as it was.
+    Whether he was locked the API does not say either. Sleeper's matchup
+    points looked like it - the score that counts right now - but are not:
+    they kept a game nobody locked (Derik Queen 48) and lost one that was
+    (Kobe Sanders 44, back to -3 an hour later). So the manager marks the
+    lock (`lock_date`, `save_lock`): that game's score stands, his week is
+    over, and he cannot be moved.
 
     A team without a game this week is a bye.
     """
@@ -2341,11 +2344,7 @@ def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=Fa
     injury = (sig or {}).get("injury") or {}
     played = (weekly["played"].get(pid) or []) if starting else []
     played_bench = not starting and bool(weekly["played"].get(pid))
-    earlier = None
-    if counted is not None and played and abs(played[-1][1] - counted) >= 0.05:
-        earlier = next((g for g in reversed(played[:-1]) if abs(g[1] - counted) < 0.05), None)
-        if earlier is None and not counted:
-            played = []
+    earlier = next((g for g in played if g[0] == lock_date), None) if lock_date else None
 
     horizon = []
     now = None
@@ -2451,6 +2450,9 @@ def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=Fa
         "games_week": len(rows),
         "lock": lock,
         "spread": round(nba.sigma(mean_mu, weekly.get("scale") or 1.0), 1) if mus else None,
+        # A starter's games so far, the ones he can be marked as locked on.
+        "played_week": [{"date": d, "score": round(x, 1)} for d, x in played] if starting else None,
+        "locked_game": {"date": earlier[0], "score": round(earlier[1], 1)} if earlier else None,
     }
 
 
@@ -2465,7 +2467,7 @@ def _starter_ids(roster):
 
 def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None,
                   weekly=None, horizon_pts=False, horizon_weights=None, positions=None,
-                  starting=False, counted=None):
+                  starting=False, lock_date=None):
     """One enriched player record, keyed by the positions the league's slots use.
 
     With `horizon_pts` - the waiver board - `pts` is the forecast pace over the
@@ -2509,7 +2511,7 @@ def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, pro
                     if sig and sig.get("context") else None),
     }
     entry.update(_week_fields(pid, player, sig, weekly, proj, horizon_weights, starting,
-                              counted))
+                              lock_date))
     if horizon_pts and entry["pts_pace"] is not None:
         entry["pts_season"] = pts
         entry["pts"] = entry["pts_pace"]
@@ -3144,29 +3146,8 @@ def close_calls(changes, stance=None, close=forecast.CLOSE_CALL):
     return out
 
 
-def counted_points(matchup):
-    """{pid: points} of a matchup row's starters: in NBA Lock-In, the score
-    that counts for each right now (`_nba_week_fields`)."""
-    if not matchup:
-        return {}
-    return {str(pid): pts for pid, pts in zip(matchup.get("starters") or [],
-                                              matchup.get("starters_points") or [])
-            if str(pid) != "0" and pts is not None}
-
-
-def _lockin_matchups(league, weekly):
-    """This week's matchup rows of an NBA Lock-In league, else []."""
-    if not league or not weekly or weekly.get("sport") != "nba":
-        return []
-    try:
-        return sleeper_api.get_matchups(league["league_id"], weekly["week"]) or []
-    except Exception as e:  # noqa: BLE001 - lock advice, never a failed request
-        print(f"NBA matchups failed: {e}")
-        return []
-
-
 def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_total, week,
-                   margin_line=FAVORITE_MARGIN, matchups=None):
+                   margin_line=FAVORITE_MARGIN):
     """Where you stand this week: your best lineup against your opponent's.
 
     Both through the same forecast. The opponent is credited with his best
@@ -3177,8 +3158,7 @@ def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_tota
     if ((league or {}).get("settings") or {}).get("type") == 3:
         return {"kind": "chopped", "margin": None, "opponent": None,
                 "my_total": my_total, "opp_total": None}
-    if matchups is None:
-        matchups = sleeper_api.get_matchups(league["league_id"], week) or []
+    matchups = sleeper_api.get_matchups(league["league_id"], week) or []
     mine = next((m for m in matchups if m.get("roster_id") == my_roster.get("roster_id")), None)
     if not mine or mine.get("matchup_id") is None:
         return None
@@ -3191,14 +3171,12 @@ def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_tota
     squad = []
     opp_starters = _starter_ids(opp_roster)
     opp_stash = roster_stash(opp_roster)
-    opp_counted = counted_points(opp_row)
     for pid in opp_roster.get("players") or []:
         p = players.get(str(pid))
         if p and str(pid) not in opp_stash:
             squad.append(_player_entry(pid, p, stats, college_data, signals_by_pid.get(str(pid)),
                                        None, projs=projs, weekly=weekly,
-                                       starting=str(pid) in opp_starters,
-                                       counted=opp_counted.get(str(pid))))
+                                       starting=str(pid) in opp_starters))
     opp_total = best_lineup_with_locks(squad, roster_positions,
                                        current_lineup(opp_roster, roster_positions, squad))[0]["total"]
     users = {u["user_id"]: u.get("display_name") or u.get("username")
@@ -3422,10 +3400,9 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
     players, college_data, stats, signals_by_pid, projs, weekly = inputs
     my_starters = _starter_ids(my_roster)
     stash = roster_stash(my_roster)
-    # NBA Lock-In: what Sleeper counts for each starter tells who is locked.
-    matchups = _lockin_matchups(league, weekly)
-    counted = counted_points(next((m for m in matchups
-                                   if m.get("roster_id") == my_roster.get("roster_id")), None))
+    # NBA Lock-In: the games the manager marked as locked (`save_lock`).
+    locks = (load_locks(league["league_id"], weekly["week"])
+             if league and weekly and weekly.get("sport") == "nba" else {})
     squad, stashed = [], []
     for pid in my_roster.get("players") or []:
         p = players.get(str(pid))
@@ -3435,7 +3412,7 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
                               signals_by_pid.get(str(pid)), None,
                               projs=projs, weekly=weekly,
                               starting=str(pid) in my_starters,
-                              counted=counted.get(str(pid)))
+                              lock_date=locks.get(str(pid)))
         if str(pid) in stash:
             entry["stash"] = stash[str(pid)]
             stashed.append(entry)
@@ -3510,7 +3487,7 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
         try:
             stance = matchup_stance(league, my_roster, rosters, roster_positions, inputs,
                                     report["total"], weekly["week"],
-                                    _thresholds(weekly)["favorite"], matchups or None)
+                                    _thresholds(weekly)["favorite"])
         except Exception as e:  # noqa: BLE001 - advice, never a failed request
             print(f"Matchup stance failed: {e}")
     current_total = round(
@@ -3660,24 +3637,34 @@ def lineup_overview_api(username, sport="nfl"):
         analysis = _lineup_analysis(my_roster, league.get("roster_positions") or [],
                                     by_scoring[key], league=league, rosters=rosters)
         week = week or analysis["week"]
-        entry.update({
-            "issues": analysis["issues"],
-            "lock_calls": analysis["lock_calls"],
-            "activations": analysis["activations"],
-            "changes": analysis["changes"],
-            "forecast_notes": analysis["forecast_notes"],
-            "close_calls": analysis["close_calls"],
-            "matchup": analysis["matchup"],
-            "current_total": analysis["current_total"],
-            "total": analysis["total"],
-            "gain": analysis["gain"],
-            "severity": max((i["severity"] for i in analysis["issues"]), default=0),
-        })
+        entry.update(_overview_fields(analysis))
 
-    out.sort(key=lambda e: (e["skipped"] is not None, -e["severity"],
-                            -(e.get("gain") or 0), e["name"] or ""))
+    out.sort(key=_overview_order)
     return {"username": username, "sport": sport, "season": season, "week": week,
             "leagues": out}
+
+
+def _overview_fields(analysis):
+    """What the overview keeps of one league's lineup analysis."""
+    return {
+        "issues": analysis["issues"],
+        "lock_calls": analysis["lock_calls"],
+        "activations": analysis["activations"],
+        "changes": analysis["changes"],
+        "forecast_notes": analysis["forecast_notes"],
+        "close_calls": analysis["close_calls"],
+        "matchup": analysis["matchup"],
+        "current_total": analysis["current_total"],
+        "total": analysis["total"],
+        "gain": analysis["gain"],
+        "severity": max((i["severity"] for i in analysis["issues"]), default=0),
+    }
+
+
+def _overview_order(entry):
+    """Leagues that need something first, the biggest gain first among them."""
+    return (entry["skipped"] is not None, -entry["severity"],
+            -(entry.get("gain") or 0), entry["name"] or "")
 
 
 WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
@@ -3986,23 +3973,103 @@ def load_overview_snapshot(username, sport="nfl"):
     if hit and time.time() - hit[0] < _SNAPSHOT_TTL:
         return hit[1]
 
-    data = None
+    data = _read_fresh(filename)
+    if data is not None:
+        _SNAPSHOT_CACHE[filename] = (time.time(), data)
+    return data
+
+
+def _read_fresh(filename):
+    """A data file as Cloud Storage has it right now, or None.
+
+    Not through `load_json`, which keeps the first copy a container pulled.
+    Locally, without a bucket, the file on disk is the one.
+    """
     bucket = _bucket()
     if bucket:
         try:
             blob = bucket.blob(f"data/{filename}")
             if blob.exists():
-                data = json.loads(blob.download_as_bytes())
+                return json.loads(blob.download_as_bytes())
         except Exception as e:
-            print(f"Snapshot read failed for {filename}: {e}")
-    if data is None:
-        path = os.path.join(CACHE_DIR, filename)
-        if os.path.exists(path):
-            with open(path) as f:
-                data = json.load(f)
-    if data is not None:
-        _SNAPSHOT_CACHE[filename] = (time.time(), data)
-    return data
+            print(f"Fresh read failed for {filename}: {e}")
+    path = os.path.join(CACHE_DIR, filename)
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return None
+
+
+# ---- NBA Lock-In: locks the manager marked ----------------------------------
+#
+# Sleeper's API does not say who is locked (`_nba_week_fields`), so the
+# manager marks it in the app: per league, the game of each player he locked
+# this week. A week's marks are dropped when the next week starts.
+
+def locks_file(league_id):
+    league_id = str(league_id or "")
+    return f"locks_nba_{league_id}.json" if league_id.isdigit() else None
+
+
+def load_locks(league_id, week):
+    """{pid: date of the locked game} for this league and week."""
+    filename = locks_file(league_id)
+    data = (_read_fresh(filename) if filename else None) or {}
+    return dict(data.get("locks") or {}) if data.get("week") == week else {}
+
+
+def save_lock(league_id, week, pid, date):
+    """Mark `pid` as locked on the game of `date`, or unmark him (date None)."""
+    filename = locks_file(league_id)
+    locks = load_locks(league_id, week)
+    if date:
+        locks[str(pid)] = date
+    else:
+        locks.pop(str(pid), None)
+    _write_data(filename, {"week": week, "locks": locks})
+    return locks
+
+
+def set_lock_api(username, league_id, player_id, date):
+    """Mark a starter's game as locked (or unmark it) and answer with the
+    lineup as it now stands. The stored overview gets the same league
+    recomputed, so it does not keep calling a swap for him until its next
+    scheduled run."""
+    player_id = str(player_id or "")
+    if not locks_file(league_id) or not player_id.isalnum():
+        return {"error": "Ungültige Liga oder Spieler."}
+    if date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(date)):
+        return {"error": "Ungültiges Datum."}
+    user = sleeper_api.get_user(username)
+    if not user:
+        return {"error": "User not found"}
+    rosters = sleeper_api.get_rosters(league_id) or []
+    my_roster = next((r for r in rosters if r.get("owner_id") == user["user_id"]), None)
+    if not my_roster or player_id not in {str(p) for p in my_roster.get("players") or []}:
+        return {"error": "Der Spieler ist nicht in deinem Kader."}
+    week = current_week("nba")
+    if week is None:
+        return {"error": "Gerade läuft keine NBA-Woche."}
+    save_lock(league_id, week, player_id, date or None)
+
+    result = optimize_lineup_api(username, league_id, "nba")
+    if "error" not in result:
+        _patch_overview(username, "nba", league_id, result)
+    return result
+
+
+def _patch_overview(username, sport, league_id, analysis):
+    """Replace one league's lineup part of the stored overview."""
+    filename = overview_file(sport, username)
+    snapshot = load_overview_snapshot(username, sport) if filename else None
+    leagues = ((snapshot or {}).get("lineup") or {}).get("leagues") or []
+    entry = next((e for e in leagues if str(e.get("league_id")) == str(league_id)), None)
+    if not entry or entry.get("skipped"):
+        return
+    entry.update(_overview_fields(analysis))
+    leagues.sort(key=_overview_order)
+    _write_data(filename, snapshot)
+    _SNAPSHOT_CACHE[filename] = (time.time(), snapshot)
 
 
 def get_user_drafts_api(username, sport="nfl", season="2026", seasons=None):
