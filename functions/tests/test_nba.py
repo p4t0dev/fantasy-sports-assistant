@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -221,6 +222,71 @@ class WeekFieldsTest(unittest.TestCase):
         self.assertEqual(call["open"], 14.0)
         self.assertEqual(result["changes"], [])
         self.assertEqual(result["total"], 17.0)
+
+    def counted_week(self, counted):
+        # Two games played, 44 and 2, one still to come: what Sleeper's
+        # matchup counts for him tells whether the 44 was locked.
+        weekly = self.weekly("2026-10-28", {"1": [("2026-10-26", 44.0), ("2026-10-27", 2.0)]})
+        weekly["games"][2]["1"] = [("2026-10-28", "DET", 4.0)]
+        return api_core._nba_week_fields("1", {"team": "BOS"}, None, weekly,
+                                         starting=True, counted=counted)
+
+    def test_an_earlier_lock_shows_in_the_matchup_points(self):
+        f = self.counted_week(44.0)
+        self.assertTrue(f["locked"])
+        self.assertIsNone(f["lock"])
+        self.assertEqual(f["pts_week"], 44.0)
+        self.assertIn("Eingelockt am 26.10.", " ".join(f["forecast"]["explain"]))
+
+    def test_the_last_game_counting_keeps_the_call(self):
+        for counted in (2.0, None, 17.0):
+            f = self.counted_week(counted)
+            self.assertFalse(f["locked"])
+            self.assertEqual(f["lock"]["score"], 2.0)
+
+    def test_games_that_did_not_count_cannot_be_locked(self):
+        # Sleeper counts 0: he did not start the 45, so it cannot be locked.
+        f = api_core._nba_week_fields("1", {"team": "BOS"}, None,
+                                      self.weekly("2026-10-27", {"1": [("2026-10-26", 45.0)]}),
+                                      starting=True, counted=0.0)
+        self.assertIsNone(f["lock"])
+        self.assertFalse(f["locked"])
+        self.assertEqual(f["pts_week"], 30.0)
+
+    def test_a_locked_starter_is_never_swapped_out(self):
+        weekly = self.weekly("2026-10-28", {"1": [("2026-10-26", 44.0), ("2026-10-27", 2.0)]})
+        weekly["games"][2]["1"] = [("2026-10-28", "DET", 4.0)]
+        weekly["games"][2]["2"] = [("2026-10-28", "DET", 30.0)]
+        roster = {"roster_id": 7, "players": ["1", "2"], "starters": ["1"]}
+        players = {str(i): {"first_name": "Guard", "last_name": name, "position": "PG",
+                            "fantasy_positions": ["PG"], "team": "BOS", "sport": "nba"}
+                   for i, name in ((1, "Locked"), (2, "Bench"))}
+        inputs = (players, {}, {}, {}, {}, weekly)
+        matchups = [{"roster_id": 7, "matchup_id": 1, "starters": ["1"],
+                     "starters_points": [44.0]}]
+        with mock.patch.object(api_core.sleeper_api, "get_matchups", return_value=matchups):
+            result = api_core._lineup_analysis(roster, ["PG", "BN"], inputs,
+                                               league={"league_id": "L"})
+        self.assertEqual(result["changes"], [])
+        self.assertEqual(result["lock_calls"], [])
+        self.assertEqual(result["total"], 44.0)
+
+
+class ScoringTest(unittest.TestCase):
+
+    def test_every_stat_the_league_scores_counts(self):
+        # Darius Acuff on 2026-11-04: 22 points on 8 of 24. Sleeper: 43.
+        line = {"pts": 22, "reb": 3, "ast": 12, "stl": 2, "to": 4, "tpm": 3, "dd": 1,
+                "fgm": 8, "fga": 24, "fgmi": 16, "ftm": 3, "fta": 4, "ftmi": 1, "sp": 2548}
+        scoring = {"pts": 1.0, "reb": 1.0, "ast": 2.0, "stl": 4.0, "blk": 4.0, "to": -2.0,
+                   "tpm": 1.0, "dd": 0.0, "td": 0.0, "fgm": 2.0, "fga": -1.0, "fgmi": 0.0,
+                   "ftm": 1.0, "fta": -1.0, "ftmi": 0.0, "ff": -2.0, "tf": -2.0}
+        self.assertEqual(api_core.calculate_custom_score(line, "PG", scoring, "nba"), 43.0)
+
+    def test_without_settings_sleeper_standard(self):
+        line = {"pts": 20, "reb": 5, "ast": 4, "stl": 1, "blk": 1, "to": 2, "tpm": 2, "fga": 15}
+        self.assertEqual(api_core.calculate_custom_score(line, "PG", {}, "nba"), 37.0)
+
 
 class YouthTest(unittest.TestCase):
 

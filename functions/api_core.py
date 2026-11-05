@@ -708,17 +708,20 @@ AGE_CURVES = {
 DEFAULT_AGE_CURVE = [(25, 1.1), (28, 1.0), (30, 0.8), (32, 0.6), (99, 0.4)]
 
 
-def _score_nba(p_stats, scoring):
-    """Sleeper NBA scoring. Defaults match Sleeper's own standard settings."""
-    def val(key, default):
-        return (p_stats.get(key, 0) or 0) * (scoring or {}).get(key, default)
+# Sleeper's standard NBA scoring, for a stat the league's settings leave out.
+NBA_DEFAULT_SCORING = {"pts": 1.0, "reb": 1.2, "ast": 1.5, "stl": 3.0, "blk": 3.0,
+                       "to": -1.0, "tpm": 0.5}
 
-    score = (
-        val("pts", 1.0) + val("reb", 1.2) + val("ast", 1.5) + val("stl", 3.0) +
-        val("blk", 3.0) + val("to", -1.0) + val("tpm", 0.5) + val("dd", 0.0) +
-        val("td", 0.0) + val("tf", 0.0) + val("ff", 0.0) +
-        val("bonus_pt_40p", 0.0) + val("bonus_pt_50p", 0.0)
-    )
+
+def _score_nba(p_stats, scoring):
+    """Sleeper NBA scoring: every stat the league scores, times its points.
+
+    Every key, not a fixed list. A league that scores shooting (fgm +2,
+    fga -1, ftm +1, fta -1) had those left out: a 22-point night on 8 of 24
+    read 52 here and 43 in Sleeper, and the lock-in calls were made on it.
+    """
+    rules = {**NBA_DEFAULT_SCORING, **(scoring or {})}
+    score = sum((p_stats.get(key, 0) or 0) * (points or 0) for key, points in rules.items())
     return round(score, 2)
 
 
@@ -2199,7 +2202,8 @@ def _forecast_week(pid, player, sig, weekly, proj, i, locked=False):
     return fc
 
 
-def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None, starting=False):
+def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None, starting=False,
+                 counted=None):
     """This week's forecast and schedule for one player, or Nones off-season.
 
     `pts_week` is the forecast of functions/forecast.py - Sleeper's number,
@@ -2213,7 +2217,8 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None, star
     lives on the same scale as the season projection it replaces for waivers.
 
     `starting` - whether he sits in a starting slot of his roster right now -
-    only matters in the NBA, where only a starter's game can be locked.
+    only matters in the NBA, where only a starter's game can be locked, and
+    so does `counted`: what Sleeper's matchup says counts for him right now.
     """
     if not weekly:
         return {"pts_week": None, "pts_week_base": None, "pts_horizon": None,
@@ -2222,7 +2227,8 @@ def _week_fields(pid, player, sig, weekly, proj=None, horizon_weights=None, star
                 "bye": False, "bye_week": None, "locked": False, "usage": None,
                 "forecast": None, "games_week": None, "lock": None, "spread": None}
     if weekly.get("sport") == "nba":
-        return _nba_week_fields(str(pid), player, sig, weekly, horizon_weights, starting)
+        return _nba_week_fields(str(pid), player, sig, weekly, horizon_weights, starting,
+                                counted)
 
     pid = str(pid)
     weeks = weekly["weeks"]
@@ -2302,7 +2308,8 @@ def _nba_week(rows, team, weekly, injury):
     return spec
 
 
-def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=False):
+def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=False,
+                     counted=None):
     """`_week_fields` for the NBA: one game per starter and week (Lock-In).
 
     Each week is worth the optimal lock-in value over his games in it
@@ -2318,6 +2325,14 @@ def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=Fa
     matchup the same way. Whether he started that game the API does not say;
     where he sits now stands in for it.
 
+    Whether he was locked earlier the API does not say either, but `counted`
+    - Sleeper's points for him in this week's matchup - gives it away. It is
+    the score that counts right now: his last game unless he locked one. One
+    that matches an earlier game and not his last is a lock: his week is
+    over, and he cannot be moved. Zero after games he played means none of
+    them counted - he did not start them - so there is nothing to lock.
+    Anything else (a game under way) leaves the call as it was.
+
     A team without a game this week is a bye.
     """
     weeks = weekly["weeks"]
@@ -2326,6 +2341,11 @@ def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=Fa
     injury = (sig or {}).get("injury") or {}
     played = (weekly["played"].get(pid) or []) if starting else []
     played_bench = not starting and bool(weekly["played"].get(pid))
+    earlier = None
+    if counted is not None and played and abs(played[-1][1] - counted) >= 0.05:
+        earlier = next((g for g in reversed(played[:-1]) if abs(g[1] - counted) < 0.05), None)
+        if earlier is None and not counted:
+            played = []
 
     horizon = []
     now = None
@@ -2349,12 +2369,14 @@ def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=Fa
     last = played[-1] if played else None
     # His week is over: a starter's last game stands, a bench player's games
     # are gone. Neither can be moved any more.
-    locked = (bool(played) or played_bench) and not rows
+    locked = earlier is not None or ((bool(played) or played_bench) and not rows)
     lock = None
-    if last is not None:
+    if last is not None and earlier is None:
         lock = nba.lock_advice(last[1], rest if rows else None)
         lock["date"] = last[0]
-    if locked:
+    if earlier:
+        pts_week = base = earlier[1]
+    elif locked:
         # Never locked earlier: a starter's last game counts, a bench player's
         # nothing.
         pts_week = last[1] if last else 0.0
@@ -2370,7 +2392,10 @@ def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=Fa
     raw = [S for _, _, S in rows]
     mean_mu = sum(mus) / len(mus) if mus else 0.0
     explain = []
-    if rows:
+    if earlier:
+        explain.append(f"Eingelockt am {earlier[0][8:]}.{earlier[0][5:7]}.: "
+                       f"{_fmt1(earlier[1])} - seine Woche steht")
+    elif rows:
         explain.append(f"Lock-In: pro Woche zählt ein Spiel - {len(rows)} "
                        f"{'Spiel' if len(rows) == 1 else 'Spiele'} übrig "
                        f"({', '.join(d[5:].replace('-', '.') for d, _, _ in rows)})")
@@ -2394,7 +2419,7 @@ def _nba_week_fields(pid, player, sig, weekly, horizon_weights=None, starting=Fa
         cmp = "≥" if lock["lock"] else "<"
         explain.append(f"Letztes Spiel {_fmt1(lock['score'])} {cmp} {_fmt1(lock['rest'])} "
                        f"Restwert → {verb}")
-    elif locked and last:
+    elif locked and last and not earlier:
         explain.append(f"Alle Spiele gespielt - es zählt {_fmt1(last[1])} "
                        "(oder das früher eingelockte Spiel)")
     explain.append(f"Prognose {_fmt1(pts_week)}")
@@ -2440,7 +2465,7 @@ def _starter_ids(roster):
 
 def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, projs=None,
                   weekly=None, horizon_pts=False, horizon_weights=None, positions=None,
-                  starting=False):
+                  starting=False, counted=None):
     """One enriched player record, keyed by the positions the league's slots use.
 
     With `horizon_pts` - the waiver board - `pts` is the forecast pace over the
@@ -2483,7 +2508,8 @@ def _player_entry(pid, player, stats, college_data, sig, levels, extra=None, pro
         "context": ({k: v for k, v in sig["context"].items() if k != "pid"}
                     if sig and sig.get("context") else None),
     }
-    entry.update(_week_fields(pid, player, sig, weekly, proj, horizon_weights, starting))
+    entry.update(_week_fields(pid, player, sig, weekly, proj, horizon_weights, starting,
+                              counted))
     if horizon_pts and entry["pts_pace"] is not None:
         entry["pts_season"] = pts
         entry["pts"] = entry["pts_pace"]
@@ -3118,8 +3144,29 @@ def close_calls(changes, stance=None, close=forecast.CLOSE_CALL):
     return out
 
 
+def counted_points(matchup):
+    """{pid: points} of a matchup row's starters: in NBA Lock-In, the score
+    that counts for each right now (`_nba_week_fields`)."""
+    if not matchup:
+        return {}
+    return {str(pid): pts for pid, pts in zip(matchup.get("starters") or [],
+                                              matchup.get("starters_points") or [])
+            if str(pid) != "0" and pts is not None}
+
+
+def _lockin_matchups(league, weekly):
+    """This week's matchup rows of an NBA Lock-In league, else []."""
+    if not league or not weekly or weekly.get("sport") != "nba":
+        return []
+    try:
+        return sleeper_api.get_matchups(league["league_id"], weekly["week"]) or []
+    except Exception as e:  # noqa: BLE001 - lock advice, never a failed request
+        print(f"NBA matchups failed: {e}")
+        return []
+
+
 def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_total, week,
-                   margin_line=FAVORITE_MARGIN):
+                   margin_line=FAVORITE_MARGIN, matchups=None):
     """Where you stand this week: your best lineup against your opponent's.
 
     Both through the same forecast. The opponent is credited with his best
@@ -3130,7 +3177,8 @@ def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_tota
     if ((league or {}).get("settings") or {}).get("type") == 3:
         return {"kind": "chopped", "margin": None, "opponent": None,
                 "my_total": my_total, "opp_total": None}
-    matchups = sleeper_api.get_matchups(league["league_id"], week) or []
+    if matchups is None:
+        matchups = sleeper_api.get_matchups(league["league_id"], week) or []
     mine = next((m for m in matchups if m.get("roster_id") == my_roster.get("roster_id")), None)
     if not mine or mine.get("matchup_id") is None:
         return None
@@ -3143,12 +3191,14 @@ def matchup_stance(league, my_roster, rosters, roster_positions, inputs, my_tota
     squad = []
     opp_starters = _starter_ids(opp_roster)
     opp_stash = roster_stash(opp_roster)
+    opp_counted = counted_points(opp_row)
     for pid in opp_roster.get("players") or []:
         p = players.get(str(pid))
         if p and str(pid) not in opp_stash:
             squad.append(_player_entry(pid, p, stats, college_data, signals_by_pid.get(str(pid)),
                                        None, projs=projs, weekly=weekly,
-                                       starting=str(pid) in opp_starters))
+                                       starting=str(pid) in opp_starters,
+                                       counted=opp_counted.get(str(pid))))
     opp_total = best_lineup_with_locks(squad, roster_positions,
                                        current_lineup(opp_roster, roster_positions, squad))[0]["total"]
     users = {u["user_id"]: u.get("display_name") or u.get("username")
@@ -3372,6 +3422,10 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
     players, college_data, stats, signals_by_pid, projs, weekly = inputs
     my_starters = _starter_ids(my_roster)
     stash = roster_stash(my_roster)
+    # NBA Lock-In: what Sleeper counts for each starter tells who is locked.
+    matchups = _lockin_matchups(league, weekly)
+    counted = counted_points(next((m for m in matchups
+                                   if m.get("roster_id") == my_roster.get("roster_id")), None))
     squad, stashed = [], []
     for pid in my_roster.get("players") or []:
         p = players.get(str(pid))
@@ -3380,7 +3434,8 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
         entry = _player_entry(pid, p, stats, college_data,
                               signals_by_pid.get(str(pid)), None,
                               projs=projs, weekly=weekly,
-                              starting=str(pid) in my_starters)
+                              starting=str(pid) in my_starters,
+                              counted=counted.get(str(pid)))
         if str(pid) in stash:
             entry["stash"] = stash[str(pid)]
             stashed.append(entry)
@@ -3455,7 +3510,7 @@ def _lineup_analysis(my_roster, roster_positions, inputs, league=None, rosters=N
         try:
             stance = matchup_stance(league, my_roster, rosters, roster_positions, inputs,
                                     report["total"], weekly["week"],
-                                    _thresholds(weekly)["favorite"])
+                                    _thresholds(weekly)["favorite"], matchups or None)
         except Exception as e:  # noqa: BLE001 - advice, never a failed request
             print(f"Matchup stance failed: {e}")
     current_total = round(
