@@ -33,6 +33,8 @@ schedule_*.json
 
 # Per-user overview snapshots: built by the scheduled job, and personal.
 overview_*.json
+# NBA locks marked in the app, per league.
+locks_*.json
 
 # Packaged skill archives
 *.zip

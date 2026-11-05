@@ -14,7 +14,20 @@ export function apiUrl(path: string, params?: Record<string, string | undefined>
 }
 
 export async function apiGet<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
-  const response = await fetch(apiUrl(path, params));
+  return parse<T>(await fetch(apiUrl(path, params)));
+}
+
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return parse<T>(
+    await fetch(apiUrl(path), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+  );
+}
+
+async function parse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     // Every endpoint now answers with JSON {error: "..."}, so surface the real
     // reason instead of a generic "request failed".

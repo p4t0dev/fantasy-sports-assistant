@@ -263,6 +263,28 @@ def optimize_lineup(req: https_fn.Request) -> https_fn.Response:
 
 
 @https_fn.on_request(memory=512)
+def set_lock(req: https_fn.Request) -> https_fn.Response:
+    """NBA Lock-In: mark a starter's game as locked, or unmark it (date null).
+    Sleeper's API does not say who is locked. Answers with the lineup."""
+    if req.method == 'OPTIONS':
+        return _preflight(req)
+    if req.method != 'POST':
+        return _error("POST erwartet", 405, req)
+
+    body = req.get_json(silent=True) or {}
+    username = body.get("username")
+    league_id = body.get("league_id")
+    player_id = body.get("player_id")
+    if not username or not league_id or not player_id:
+        return _error("Missing username, league_id or player_id", 400, req)
+
+    result = api_core.set_lock_api(username, league_id, player_id, body.get("date"))
+    if "error" in result:
+        return _error(result["error"], 400, req)
+    return _json(result, 200, req)
+
+
+@https_fn.on_request(memory=512)
 def get_overview(req: https_fn.Request) -> https_fn.Response:
     """The stored cross-league overview. Never computed on request."""
     if req.method == 'OPTIONS':
